@@ -14,7 +14,7 @@ const crabType = z.enum(['MEAT', 'EGG', 'UNKNOWN']);
 const crabStatus = z.enum(['FATTENING', 'READY', 'SOLD', 'DEAD']);
 
 const crabBody = z.object({
-  code: z.string().optional(),
+  code: z.string().nullable().optional(),
   systemId: z.number().int().positive(),
   boxId: z.number().int().positive().nullable().optional(),
   type: crabType.optional(),
@@ -31,7 +31,7 @@ const crabBody = z.object({
   sellDate: z.coerce.date().nullable().optional(),
   status: crabStatus.optional(),
   round: z.number().int().positive().nullable().optional(),
-  note: z.string().optional(),
+  note: z.string().nullable().optional(),
 });
 
 const listQuery = z.object({

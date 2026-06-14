@@ -58,6 +58,15 @@ export function createCrab(data: Prisma.CrabUncheckedCreateInput) {
     if (data.boxId != null) {
       await assertBoxAvailable(tx, data.systemId, data.boxId);
     }
+    // ถ้าไม่ระบุรหัสปู → default = ชื่อระบบ + รหัสกล่อง (เช่นระบบ "1" กล่อง A1 → "1A1")
+    // กัน code ซ้ำข้ามระบบ เพราะนำชื่อระบบมานำหน้า
+    if ((data.code == null || data.code === '') && data.boxId != null) {
+      const [system, box] = await Promise.all([
+        tx.crabSystem.findUnique({ where: { id: data.systemId }, select: { name: true } }),
+        tx.crabBox.findUnique({ where: { id: data.boxId }, select: { code: true } }),
+      ]);
+      if (system && box) data.code = `${system.name}${box.code}`;
+    }
     const crab = await tx.crab.create({ data });
     if (crab.boxId != null) {
       await tx.crabBox.update({ where: { id: crab.boxId }, data: { status: 'OCCUPIED' } });

@@ -38,6 +38,12 @@ const generateBoxesBody = z
   })
   .refine((d) => d.to >= d.from, { message: 'to ต้อง >= from' });
 
+// สร้างกล่องเป็นตาราง row × column (แถวเป็นตัวอักษร A.. สูงสุด 26 แถว)
+const generateGridBody = z.object({
+  rows: z.number().int().min(1).max(26),
+  cols: z.number().int().min(1).max(50),
+})
+
 const filterTankBody = z.object({
   name: z.string().min(1),
   mediaType: z.string().optional(),
@@ -111,6 +117,15 @@ systemRouter.post(
   validate({ params: idParam, body: generateBoxesBody }),
   asyncHandler(async (req, res) => {
     res.status(201).json(await svc.generateBoxes(Number(req.params.id), req.body));
+  }),
+);
+
+// สร้างกล่องเป็นตาราง row × column (เช่น 6×5 → A1..F5)
+systemRouter.post(
+  '/:id/boxes/generate-grid',
+  validate({ params: idParam, body: generateGridBody }),
+  asyncHandler(async (req, res) => {
+    res.status(201).json(await svc.generateBoxGrid(Number(req.params.id), req.body));
   }),
 );
 

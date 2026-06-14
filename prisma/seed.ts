@@ -202,6 +202,28 @@ async function main() {
   }
   console.log(`🔔 reminder rules: ${REMINDER_RULES.length} กฎ (วัดน้ำ/ให้อาหาร/วัดน้ำหลังเติมน้ำจืด)`);
 
+  // 8) Contact ตัวอย่าง (โมดูล E) — idempotent ด้วย findFirst ตาม name+type
+  const CONTACTS: {
+    name: string;
+    type: 'BUYER' | 'SELLER' | 'BOTH';
+    isRegular?: boolean;
+    phone?: string;
+    note?: string;
+  }[] = [
+    { name: 'ลูกค้าประจำ (ร้านอาหาร)', type: 'BUYER', isRegular: true, note: 'ล็อกออเดอร์ให้ได้ (4.3)' },
+    { name: 'พ่อค้าคนกลาง', type: 'BOTH', note: 'ทั้งซื้อและขาย' },
+    { name: 'ฟาร์มต้นทาง (ซื้อปูเข้า)', type: 'SELLER' },
+  ];
+  for (const c of CONTACTS) {
+    const existing = await prisma.contact.findFirst({ where: { name: c.name, type: c.type } });
+    if (existing) {
+      await prisma.contact.update({ where: { id: existing.id }, data: c });
+    } else {
+      await prisma.contact.create({ data: c });
+    }
+  }
+  console.log(`🤝 contacts: ${CONTACTS.length} ราย (ผู้ซื้อประจำ/คนกลาง/ผู้ขาย)`);
+
   console.log('✅ seed เสร็จสมบูรณ์');
 }
 

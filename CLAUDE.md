@@ -4,7 +4,41 @@
 > อัปเดตทุกครั้งที่มี decision สำคัญ / สร้าง module ใหม่ / เปลี่ยน schema
 
 ## 👉 ทำต่อจากตรงนี้ (NEXT — session ใหม่อ่านตรงนี้ก่อน)
-**Phase 1–4 เสร็จแล้ว** — typecheck ผ่าน; Phase 4 **ไม่ต้อง migrate ใหม่** (model D มีตั้งแต่ schema init แล้ว)
+**Phase 1–7 เสร็จแล้ว** — typecheck ผ่าน; **ไม่ต้อง migrate** (model F `LedgerEntry` มีตั้งแต่ schema init แล้ว เหมือน Phase 4/5)
+
+**Backend ครบทุก phase แล้ว → งานถัดไปคือ Frontend (Vue.js, แยก repo)**
+- 📄 **[API.md](./API.md) = สัญญา API ครบทุก endpoint** (สำหรับ frontend อ่านแทนการไล่อ่าน route) — อัปเดตทุกครั้งที่แก้ route
+- ทุก endpoint ที่ frontend ต้องใช้ list อยู่ในบล็อก Phase ด้านล่าง (A–F) และใน API.md
+- ค่าปฏิบัติการจริง (WaterTarget min/max, DosingCalibration, DosingRule, InventoryItem) **ผู้ใช้กรอกเองผ่าน API** — seed เก็บไว้แค่โครงสร้าง (ตัดสินใจ 2026-06-14: ไม่ seed ข้อมูลปลอมลง DB จริง single-user)
+- **ยังไม่ได้ทดสอบ server จริงตั้งแต่ Phase 4** (typecheck ผ่านอย่างเดียว) — รอผู้ใช้รัน `npm run dev` ครั้งเดียวเทสรวบ Phase 4–6
+
+**Phase 6 (โมดูล F — การเงิน: LedgerEntry + Dashboard) เสร็จแล้ว** ✅ — typecheck ผ่าน, ยังไม่ทดสอบ server จริง
+- ไฟล์ใหม่: `services/ledger.service.ts`, `services/dashboard.service.ts`, `routes/finance.ts` (2 router: `ledgerRouter`/`dashboardRouter`) — mount `/api/ledger`, `/api/dashboard`
+- **hook Transaction→DONE → LedgerEntry อัตโนมัติ** (`ledger.syncLedgerForTransaction`): เรียกท้าย `createTransaction`/`updateTransaction`; `status===DONE` → upsert entry (SELL→`INCOME`/`CRAB_SALE`, BUY→`EXPENSE`/`CRAB_PURCHASE`, `amount=totalPrice`, `systemId`อิงปูที่ลิงก์, `occurredAt`อิง txn/now); ออกจาก DONE → ลบ entry; `deleteTransaction` เรียก `removeLedgerForTransaction` ก่อนลบ (กัน orphan เพราะ FK เป็น optional→SetNull)
+- **LedgerEntry CRUD** (`/api/ledger`, `?systemId&kind&category&from&to`): สำหรับรายการ manual (FOOD/SUBSTANCE/EQUIPMENT/OTHER); **PATCH/DELETE entry ที่ `transactionId!=null` ถูกบล็อก** (ให้ไปแก้ที่ Transaction); `LEDGER_CATEGORIES` = CRAB_SALE/CRAB_PURCHASE/FOOD/SUBSTANCE/EQUIPMENT/OTHER
+- **dashboard (read-only)**: `GET /api/dashboard/overview?systemId` (นับ crab/box ตามสถานะ + pendingTasks + finance net), `GET /api/dashboard/finance?systemId&from&to` (totalIncome/Expense/net + `byCategory` + `byMonth` group YYYY-MM, คำนวณใน JS เลี่ยง raw SQL), `GET /api/dashboard/crabs?systemId` (pain point #3: ปู SOLD → profit/durationDays/profitPerDay/weightG/firmness + ค่าเฉลี่ย + byStatus)
+- **gotcha:** dashboard คำนวณ aggregate ใน JS (reduce) ไม่ใช้ Prisma `_sum`/raw SQL — จัดการ `Prisma.Decimal` + group ตามเดือนข้ามฐานข้อมูลได้ตรงกว่า
+> ทดสอบ: สร้าง Transaction `{kind:"SELL", status:"DONE", pricePerUnit, crabId}` → เช็ค `GET /api/ledger` เห็น entry `CRAB_SALE` 1 ราย + `GET /api/dashboard/finance` เห็น net; PATCH txn กลับเป็น QUOTE → entry หาย
+
+**Phase 7 (seed ข้อมูลจริง) เสร็จแล้ว** ✅ — **ไม่มีไฟล์เปลี่ยน**: โครงสร้าง seed ครบตั้งแต่ Phase 2–5 แล้ว; ผู้ใช้เลือก (2026-06-14) ให้ **เก็บ WaterTarget min/max ว่าง + ไม่ seed ข้อมูลปลอม** (InventoryItem/DosingRule/Calibration/crab/txn) เพราะเป็น DB จริง single-user → กรอกผ่าน API เอง
+
+---
+**ของเดิม (Phase 5):**
+
+**Phase 5 (โมดูล E — คู่ค้า & ซื้อขาย) เสร็จแล้ว** ✅ — ยังไม่ทดสอบ server จริง (รอผู้ใช้รัน)
+- ไฟล์ใหม่: `services/contact.service.ts`, `services/transaction.service.ts`, `services/outreach.service.ts`, `routes/commerce.ts` (group 3 router: `contactRouter`/`transactionRouter`/`outreachRouter`) — mount ที่ `/api/contacts`, `/api/transactions`, `/api/outreach`
+- **คำนวณกำไรล่วงหน้า (ข้อ 4.5)** ใน `transaction.service`: `totalPrice = pricePerUnit × qty` (คำนวณเสมอ ไม่รับจาก client); `costBasis` เฉพาะ SELL — ถ้าไม่กรอกมาดึงจาก `crab.purchasePrice × qty` ของปูที่ลิงก์; `profit = totalPrice − costBasis` (SELL ที่รู้ต้นทุนเท่านั้น, BUY=null); ทุกค่า round 2 ตำแหน่ง
+- endpoints:
+  - `/api/contacts` CRUD (`?type&isRegular&active`) — list เรียงลูกค้าประจำขึ้นก่อน; `/:id` GET (รวม txns+outreach 20 ล่าสุด)
+  - `/api/transactions` GET (`?contactId&kind&status&crabId`) + POST + `/:id` GET/PATCH/DELETE; **`POST /api/transactions/preview`** คำนวณกำไรไม่บันทึก (ข้อ 4.5); status flow `QUOTE→CONFIRMED→DONE`
+  - `/api/outreach` GET (`?round&kind&status&contactId`) + POST + `/:id` PATCH/DELETE; **`POST /api/outreach/start-round`** `{round,kind,contactIds?}` เปิดรอบ → สร้าง log `PENDING` ให้คู่ค้าที่ type ตรง (SELL→BUYER/BOTH, BUY→SELLER/BOTH), idempotent (`skipDuplicates` + unique `[contactId,round,kind]`); PATCH เปลี่ยน status ออกจาก PENDING จะ set `contactedAt` ให้อัตโนมัติ
+- **gotcha:** query boolean ใช้ `boolQuery = z.enum(['true','false']).transform(...)` แทน `z.coerce.boolean()` (coerce มอง `"false"` เป็น true)
+- **seed เพิ่ม:** Contact 3 ราย (ลูกค้าประจำ BUYER / คนกลาง BOTH / ผู้ขาย SELLER) — idempotent ด้วย findFirst(name+type)
+- **ยังไม่ทำ (รอ Phase 6):** `Transaction` ตอน status→DONE ยังไม่ลง `LedgerEntry` (จะทำพร้อมโมดูล F)
+> ทดสอบ: `POST /api/transactions/preview {kind:"SELL", pricePerUnit, crabId}` → เห็น profit; `POST /api/outreach/start-round {round:1, kind:"SELL"}` → ได้ log PENDING ทุกผู้ซื้อ
+
+---
+**ของเดิม (Phase 1–4):**
 
 **Phase 4 (Reminder Engine) เสร็จแล้ว** ✅ — ยังไม่ได้ทดสอบ server จริง/ส่งเมลจริง (รอผู้ใช้รัน)
 - ไฟล์ใหม่: `lib/cron.ts` (cron matcher 5-field + `nextCronAfter` — เขียนเอง ไม่เพิ่ม dep), `lib/notify.ts` (`notifyTask`: ปลายทาง user→owner→MAIL_TO, ส่งเมล, log `Notification`, เดิน `notifyCount`/`lastNotifiedAt`), `services/task.service.ts` + `reminder.service.ts` + `scheduler.service.ts`, `routes/scheduler.ts`
@@ -42,8 +76,11 @@
 - **ยังไม่ทำ (รอ Phase 4):** บันทึก WaterTest ยังไม่ปิด Task / ไม่สร้าง Task ปรุงน้ำจาก recommendations — event chain ทำตอนมี Reminder Engine
 
 **งานถัดไป:**
-1. **Phase 5** ⭐ — โมดูล E: `Contact`, `Transaction` (status QUOTE → คำนวณกำไรล่วงหน้า), `OutreachLog` (ไล่ทักคู่ค้าทีละเจ้าต่อรอบ)
-2. **ค้าง Phase 4 (option):** `FRESHWATER_TOPUP` แบบ "นับวัน" ต่อระบบ (เช่น 12 วัน, แบ่ง 3 ครั้ง MIN→MAX `payload.splitCount`), เตือนเตรียมจุลินทรีย์ตาม `prepLeadDays`, RESTOCK จาก `InventoryItem.lowThreshold`
+1. **Frontend (Vue.js, แยก repo)** ⭐ — Backend ครบทุก phase แล้ว
+2. **ค้าง backend (option, ทำตอนกลับมาแก้):**
+   - โมดูล G `InventoryItem` ยังไม่มี service/route เลย — RESTOCK reminder type มีแต่ยังไม่มีอะไรจัดการคลัง (จะทำตอนผู้ใช้ต้องการ)
+   - `FRESHWATER_TOPUP` แบบ "นับวัน" ต่อระบบ (เช่น 12 วัน, แบ่ง 3 ครั้ง MIN→MAX `payload.splitCount`), เตือนเตรียมจุลินทรีย์ตาม `prepLeadDays`, RESTOCK จาก `InventoryItem.lowThreshold`
+   - ยังไม่ได้ทดสอบ server จริงตั้งแต่ Phase 4 (typecheck ผ่านอย่างเดียว)
 
 ## ภาพรวมโปรเจกต์
 
@@ -137,9 +174,9 @@ prisma/schema.prisma
 - [x] **Phase 2** — CRUD โมดูล A (CrabSystem/Box/FilterTank) + B (Crab) + seed ✅
 - [x] **Phase 3** — โมดูล C: WaterTest, WaterTarget, Substance, DosingCalibration, DosingRule + คำนวณ dosing (calibration-based) ✅
 - [x] **Phase 4** — Reminder Engine: ReminderRule/Task/Notification, tick endpoint, mailer, event chain ✅
-- [ ] **Phase 5** — โมดูล E: Contact, Transaction (QUOTE/กำไร), OutreachLog
-- [ ] **Phase 6** — โมดูล F: Dashboard/analytics endpoints
-- [ ] **Phase 7** — seed ข้อมูลจริง (ย้ายมาทำพร้อม Phase 2 — ดูบล็อกล่าง)
+- [x] **Phase 5** — โมดูล E: Contact, Transaction (QUOTE/กำไร preview), OutreachLog (ไล่ทักต่อรอบ) ✅
+- [x] **Phase 6** — โมดูล F: LedgerEntry (CRUD + hook Transaction→DONE) + Dashboard/analytics endpoints ✅
+- [x] **Phase 7** — seed ข้อมูลจริง: โครงสร้างครบตั้งแต่ Phase 2–5; ผู้ใช้เลือกไม่ seed ข้อมูลปลอม (กรอกผ่าน API) ✅
 
 ## Seed data (ทำพร้อม Phase 2) — `prisma/seed.ts`
 ข้อมูลจริงของผู้ใช้ที่ต้อง seed:
@@ -167,3 +204,5 @@ prisma/schema.prisma
 - **2026-06-14** — `prisma/seed.ts` รันลง DB จริง (user+ระบบ+30 กล่อง+3 ถัง+7 WaterTarget+8 Substance); ทดสอบ CRUD+box-occupancy ผ่าน server — Phase 2 ✅. บันทึก insight โมเดล dosing = calibration-based (กระทบ schema Phase 3)
 - **2026-06-14** — Phase 3 โมดูล C: redesign dosing เป็น calibration-based (เพิ่ม model `DosingCalibration`, `DosingRule` ทิ้ง `amountBasisL`/`amountPerDose`→`fixedDose`); migration `phase3_water_dosing_calibration` apply ลง DB จริง; เพิ่ม `water.service`/`dosing.service` + `routes/water`/`routes/dosing`; ทดสอบบน server จริง (dose `(14−9)/2.5=2` ถูก) — Phase 3 ✅
 - **2026-06-14** — Phase 4 Reminder Engine: เพิ่ม `lib/cron.ts` (cron matcher เขียนเอง) + `lib/notify.ts` + `task/reminder/scheduler.service` + `routes/scheduler`; tick endpoint + ตามจิก + event chain (WaterTest ปิด Task → สร้าง Task ปรุงน้ำ); internal cron (dev) + seed 3 ReminderRule; **ไม่ต้อง migrate** (model D มีอยู่แล้ว); typecheck ผ่าน — Phase 4 ✅ (ยังไม่ทดสอบ server/เมลจริง)
+- **2026-06-14** — Phase 6 โมดูล F: เพิ่ม `ledger.service` (CRUD + `syncLedgerForTransaction` hook) + `dashboard.service` (overview/finance/crabs analytics) + `routes/finance` (mount `/api/ledger`,`/api/dashboard`); Transaction status→DONE ลง LedgerEntry อัตโนมัติ (SELL→INCOME/CRAB_SALE, BUY→EXPENSE/CRAB_PURCHASE), ออกจาก DONE→ลบ entry, delete txn→ลบ entry กัน orphan; dashboard คำนวณ aggregate ใน JS (byCategory/byMonth/crab profit-per-day); **ไม่ต้อง migrate** (model F มีอยู่แล้ว); typecheck ผ่าน — Phase 6 ✅. **Phase 7** = ไม่แก้ seed (ผู้ใช้เลือกไม่ seed ข้อมูลปลอมลง DB จริง, WaterTarget เก็บว่าง) ✅ → Backend ครบทุก phase, ต่อไป Frontend
+- **2026-06-14** — Phase 5 โมดูล E: เพิ่ม `contact/transaction/outreach.service` + `routes/commerce` (mount `/api/contacts`,`/api/transactions`,`/api/outreach`); Transaction คำนวณกำไรล่วงหน้า (`profit=totalPrice−costBasis`, costBasis auto จาก `crab.purchasePrice`) + `POST /transactions/preview`; OutreachLog `start-round` เปิดรอบไล่ทักคู่ค้า (idempotent); fix gotcha query boolean (`z.coerce.boolean` มอง `"false"`=true → ใช้ enum transform); seed +3 Contact; **ไม่ต้อง migrate** (model E มีอยู่แล้ว); typecheck ผ่าน — Phase 5 ✅ (ยังไม่ทดสอบ server จริง)

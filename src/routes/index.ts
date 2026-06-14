@@ -5,6 +5,8 @@ import crabRoutes from './crabs';
 import { waterSystemRouter, waterTestRouter } from './water';
 import { substanceRouter, dosingSystemRouter, calibrationRouter, ruleRouter } from './dosing';
 import { schedulerRouter, reminderRuleRouter, taskRouter, systemEventRouter } from './scheduler';
+import { contactRouter, transactionRouter, outreachRouter } from './commerce';
+import { ledgerRouter, dashboardRouter } from './finance';
 
 const api = Router();
 
@@ -28,9 +30,12 @@ api.use('/scheduler', schedulerRouter);
 api.use('/reminder-rules', reminderRuleRouter);
 api.use('/tasks', taskRouter);
 api.use('/systems', systemEventRouter);
-
-// โมดูลถัดไปจะ mount ที่นี่ (เรียงตาม phase):
-// api.use('/contacts', contactRoutes);    // E. คู่ค้า
-// api.use('/dashboard', dashboardRoutes); // F. การเงิน
+// E. คู่ค้า & การซื้อขาย (Contact / Transaction / OutreachLog)
+api.use('/contacts', contactRouter);
+api.use('/transactions', transactionRouter);
+api.use('/outreach', outreachRouter);
+// F. การเงิน (สมุดบัญชี + dashboard/analytics)
+api.use('/ledger', ledgerRouter);
+api.use('/dashboard', dashboardRouter);
 
 export default api;

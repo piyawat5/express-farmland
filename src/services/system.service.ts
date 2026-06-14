@@ -74,6 +74,25 @@ export async function generateBoxes(
   return { requested: rows.length, created: result.count };
 }
 
+/**
+ * สร้างกล่องเป็นตาราง row × column — แถวเป็นตัวอักษร (A,B,C..) คอลัมน์เป็นเลข (1..cols)
+ * เช่น rows=6, cols=5 → A1..A5, B1..B5, ... F1..F5 (30 กล่อง)
+ * ใช้ตอนสร้างระบบใหม่ — ข้าม code ที่มีอยู่แล้ว (skipDuplicates)
+ */
+export async function generateBoxGrid(systemId: number, opts: { rows: number; cols: number }) {
+  await getSystem(systemId);
+  const { rows, cols } = opts;
+  const data = [];
+  for (let r = 0; r < rows; r++) {
+    const letter = String.fromCharCode(65 + r); // 0→A, 1→B, ...
+    for (let c = 1; c <= cols; c++) {
+      data.push({ systemId, code: `${letter}${c}` });
+    }
+  }
+  const result = await prisma.crabBox.createMany({ data, skipDuplicates: true });
+  return { requested: data.length, created: result.count };
+}
+
 export async function updateBox(id: number, data: Prisma.CrabBoxUncheckedUpdateInput) {
   const box = await prisma.crabBox.findUnique({ where: { id } });
   if (!box) throw notFound('ไม่พบกล่องปูนี้');
