@@ -1,0 +1,625 @@
+// ════════════════════════════════════════════════════════════════════
+//  ระบบจัดการเลี้ยงปูคอนโด (RAS)  —  Prisma schema (MySQL)
+//  แบ่งเป็น 7 โมดูล: A.ฮาร์ดแวร์ B.ปู C.น้ำ D.แจ้งเตือน E.คู่ค้า F.การเงิน G.คลัง
+// ════════════════════════════════════════════════════════════════════
+
+generator client {
+  provider = "prisma-client-js"
+  // ถ้า deploy แล้ว Prisma client error เรื่อง binary ให้เพิ่ม target ของ host เช่น:
+  // binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+  // shadow DB จำเป็นสำหรับ `prisma migrate dev` บน MySQL ที่ user สร้าง DB เองไม่ได้ (shared hosting)
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  ผู้ใช้ระบบ (เจ้าของฟาร์ม) — ปลายทางแจ้งเตือนดึงจากที่นี่ (dynamic ตาม user)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ผู้ใช้ระบบ — ตอนนี้ single user แต่ออกแบบเผื่อ login/หลาย user ภายหลัง
+model User {
+  id            Int      @id @default(autoincrement())
+  email         String   @unique // Gmail ปลายทางการแจ้งเตือน
+  name          String?
+  lineId        String? // เผื่อ Line ในอนาคต
+  notifyByEmail Boolean  @default(true)
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  systems CrabSystem[] // ระบบปูที่ผู้ใช้นี้เป็นเจ้าของ
+  tasks   Task[] // งานที่ต้องแจ้งให้ผู้ใช้นี้
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  A. โครงสร้างฮาร์ดแวร์ — ระบบปู / กล่อง / ถังกรอง
+// ─────────────────────────────────────────────────────────────────────
+
+/// ระบบปู = ระบบน้ำ RAS 1 ชุด (กรองแยกกัน = คนละระบบ) สร้างได้หลายระบบ
+model CrabSystem {
+  id           Int          @id @default(autoincrement())
+  name         String // เช่น "ระบบข้างบ้าน"
+  location     String?
+  waterVolumeL Decimal?     @db.Decimal(10, 2) // ปริมาตรน้ำรวม (ลิตร) ใช้คำนวณปริมาณสารที่ต้องเติม
+  minLevelNote String? // โน้ตระดับน้ำ MIN
+  maxLevelNote String? // โน้ตระดับน้ำ MAX
+  status       SystemStatus @default(ACTIVE)
+  owner        User?        @relation(fields: [ownerId], references: [id])
+  ownerId      Int? // เจ้าของระบบ → ใช้ resolve ปลายทางแจ้งเตือน
+  note         String?      @db.Text
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  boxes         CrabBox[]
+  filterTanks   FilterTank[]
+  crabs         Crab[]
+  waterTests    WaterTest[]
+  waterTargets  WaterTarget[]
+  dosingRules   DosingRule[]
+  dosingCalibrations DosingCalibration[]
+  dosingRecords DosingRecord[]
+  reminderRules ReminderRule[]
+  tasks         Task[]
+  ledgerEntries LedgerEntry[]
+}
+
+enum SystemStatus {
+  ACTIVE
+  INACTIVE
+}
+
+/// กล่องปู (1 กล่อง = ปูได้ 1 ตัว)
+model CrabBox {
+  id        Int        @id @default(autoincrement())
+  system    CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId  Int
+  code      String // เช่น "A1"
+  label     String?
+  status    BoxStatus  @default(EMPTY)
+  note      String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  crabs Crab[] // ประวัติปูที่เคย/กำลังอยู่กล่องนี้
+
+  @@unique([systemId, code])
+}
+
+enum BoxStatus {
+  EMPTY
+  OCCUPIED
+}
+
+/// ถังกรอง / วัสดุกรอง
+model FilterTank {
+  id                Int        @id @default(autoincrement())
+  system            CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId          Int
+  name              String
+  mediaType         String? // ชนิดวัสดุกรอง
+  cleanIntervalDays Int? // รอบทำความสะอาด (ข้อ 5) เช่น ทุก 60 วัน
+  lastCleanedAt     DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  B. ปู & วงจรการเลี้ยง  (ข้อ 3)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ปู 1 ตัว — ตั้งแต่ซื้อเข้ามาขุน จนขายออก
+model Crab {
+  id       Int        @id @default(autoincrement())
+  code     String? // รหัสปู (ถ้าไม่ใส่ ใช้ code ของกล่อง)
+  system   CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId Int
+  box      CrabBox?   @relation(fields: [boxId], references: [id])
+  boxId    Int?
+  type     CrabType   @default(UNKNOWN) // ขุนเนื้อ หรือ ขุนไข่
+
+  // ที่มา / ปลายทาง
+  sourceSeller     Contact? @relation("CrabSeller", fields: [sourceSellerId], references: [id])
+  sourceSellerId   Int?
+  buyer            Contact? @relation("CrabBuyer", fields: [buyerId], references: [id])
+  buyerId          Int?
+  lockedForBuyer   Contact? @relation("CrabLocked", fields: [lockedForBuyerId], references: [id]) // ล็อกให้ลูกค้าประจำ (4.3)
+  lockedForBuyerId Int?
+
+  // ตัวเลขเลี้ยง
+  purchasePrice      Decimal?  @db.Decimal(12, 2)
+  purchaseDate       DateTime?
+  weightG            Decimal?  @db.Decimal(8, 2) // น้ำหนัก (กรัม)
+  startFirmnessPct   Int? // %ความแน่นตอนเริ่ม
+  currentFirmnessPct Int? // %ความแน่นล่าสุด
+  readyAt            DateTime? // วันที่ถือว่าแน่นพร้อมขาย (ใช้คำนวณ "กี่วันถึงแน่น")
+  sellPrice          Decimal?  @db.Decimal(12, 2)
+  sellDate           DateTime?
+
+  status    CrabStatus @default(FATTENING)
+  round     Int? // รอบการขุน
+  note      String?    @db.Text
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  feedings     FeedingRecord[]
+  firmnessLogs FirmnessRecord[]
+  transactions Transaction[]
+}
+
+enum CrabType {
+  MEAT // ขุนเนื้อ
+  EGG // ขุนไข่
+  UNKNOWN
+}
+
+enum CrabStatus {
+  FATTENING // กำลังขุน
+  READY // พร้อมขาย
+  SOLD // ขายแล้ว
+  DEAD // ตาย
+}
+
+/// บันทึกการให้อาหาร (วันเว้นวัน 2 ทุ่ม + เก็บเศษ 3 ชม.หลัง) — ข้อ 3.3-3.4
+model FeedingRecord {
+  id               Int         @id @default(autoincrement())
+  crab             Crab        @relation(fields: [crabId], references: [id], onDelete: Cascade)
+  crabId           Int
+  fedAt            DateTime
+  eatingLevel      EatingLevel // กินเยอะ/น้อย/ไม่กิน (ไม่กิน = อาจใกล้แน่นพร้อมขาย)
+  scrapCollectedAt DateTime? // เวลาเก็บเศษอาหาร
+  note             String?
+  createdAt        DateTime    @default(now())
+}
+
+enum EatingLevel {
+  LOTS // กินเยอะ
+  LITTLE // กินน้อย
+  NONE // ไม่กิน
+}
+
+/// บันทึก %ความแน่นเนื้อ/ไข่ — ใช้ทำสถิติ "กี่วันถึงแน่น" (ข้อ 3.5)
+model FirmnessRecord {
+  id          Int      @id @default(autoincrement())
+  crab        Crab     @relation(fields: [crabId], references: [id], onDelete: Cascade)
+  crabId      Int
+  checkedAt   DateTime
+  firmnessPct Int
+  type        CrabType // วัดเนื้อหรือไข่
+  note        String?
+  createdAt   DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  C. การจัดการน้ำ  (ข้อ 1, 2)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ผลการวัดค่าน้ำ 1 ครั้ง — การบันทึกนี้จะ "ปิด" Task วัดน้ำ และ trigger เช็ค DosingRule
+model WaterTest {
+  id         Int        @id @default(autoincrement())
+  system     CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId   Int
+  testedAt   DateTime
+  ph         Decimal?   @db.Decimal(4, 2)
+  alkalinity Decimal?   @db.Decimal(6, 2)
+  magnesium  Decimal?   @db.Decimal(6, 2)
+  calcium    Decimal?   @db.Decimal(6, 2)
+  salinity   Decimal?   @db.Decimal(5, 2)
+  ammonia    Decimal?   @db.Decimal(6, 3)
+  nitrite    Decimal?   @db.Decimal(6, 3)
+  note       String?    @db.Text
+  task       Task?      @relation(fields: [taskId], references: [id]) // ปิด Task ไหน
+  taskId     Int?       @unique
+  createdAt  DateTime   @default(now())
+
+  dosingRecords DosingRecord[]
+}
+
+/// ค่าเป้าหมาย (min/max) ของแต่ละพารามิเตอร์ ต่อ 1 ระบบ — ใช้ตัดสินว่าต้องปรุงน้ำไหม
+model WaterTarget {
+  id        Int        @id @default(autoincrement())
+  system    CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId  Int
+  parameter WaterParam
+  minTarget Decimal?   @db.Decimal(8, 3)
+  maxTarget Decimal?   @db.Decimal(8, 3)
+  unit      String?
+
+  @@unique([systemId, parameter])
+}
+
+enum WaterParam {
+  PH
+  ALKALINITY
+  MAGNESIUM
+  CALCIUM
+  SALINITY
+  AMMONIA
+  NITRITE
+}
+
+/// คลังสาร (master list) — แร่ธาตุ/สาร/จุลินทรีย์ เพิ่มตัวใหม่ได้เองโดยไม่ต้องแก้โค้ด (ข้อ 2.1-2.3)
+model Substance {
+  id              Int               @id @default(autoincrement())
+  name            String            @unique // เช่น "เบกกิ้งโซดา", "จุลินทรีย์สังเคราะห์แสง"
+  category        SubstanceCategory
+  unit            String // ช้อนชา / ช้อนแกง / กรัม / มล.
+  needsPrep       Boolean           @default(false) // ต้องเพาะเลี้ยงก่อนใช้ (2.3)
+  prepLeadDays    Int? // เตรียมล่วงหน้ากี่วัน (สังเคราะห์แสงนาน, ปม.1 ~1 วัน)
+  needsRepurchase Boolean           @default(false) // ต้องซื้อเรื่อยๆ (biodigest)
+  note            String?           @db.Text
+  active          Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  dosingRules   DosingRule[]
+  dosingCalibrations DosingCalibration[]
+  dosingRecords DosingRecord[]
+  preps         SubstancePrep[]
+  inventory     InventoryItem?
+}
+
+enum SubstanceCategory {
+  MINERAL // แร่ธาตุ/สาร (แร่ธาตุรวม, แมกนีเซียม, แคลเซียม, เบกกิ้งโซดา, เกลือ)
+  MICROORGANISM // จุลินทรีย์/แบคทีเรีย
+  OTHER
+}
+
+/// กฎการปรุงน้ำ — "ถ้า [ค่า] [ต่ำ/สูงกว่าเป้า] → เติมสาร X / วัดค่าต่อ / แค่เตือน" (ข้อ 2.1)
+/// ปริมาณที่เติม (กรณี DOSE) คำนวณจาก DosingCalibration ต่อระบบ:
+///   dose = (targetMax - current) / effectPerUnit
+/// ถ้าไม่มี calibration ที่ตรง → ใช้ fixedDose (จำนวน fix เช่น biodigest) ถ้ามี
+model DosingRule {
+  id          Int              @id @default(autoincrement())
+  system      CrabSystem?      @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId    Int? // null = ใช้กับทุกระบบ
+  parameter   WaterParam // ค่าน้ำที่เป็นตัวจุด
+  condition   RuleCondition // ต่ำกว่า min หรือ สูงกว่า max
+  actionType  DosingActionType // เติมสาร / ให้วัดค่าต่อ / แค่หมายเหตุ
+  substance   Substance?       @relation(fields: [substanceId], references: [id])
+  substanceId Int? // กรณี DOSE
+  fixedDose   Decimal?         @db.Decimal(8, 3) // จำนวนแบบ fix (ใช้เมื่อไม่มี calibration เช่น biodigest)
+  message     String?          @db.Text // ข้อความ (ใช้กับ MEASURE_NEXT / NOTE) เช่น "Ph ต่ำ ควรวัด..ต่อ"
+  active      Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+/// Calibration ต่อระบบ — "สาร X 1 หน่วย → พารามิเตอร์ Y เปลี่ยน +Z" (ดู memory: dosing-calibration-model)
+/// แต่ละระบบไม่เท่ากันเพราะปริมาณน้ำต่างกัน; กรอกครั้งแรกตอนเปิดระบบ ครั้งต่อไปใช้คำนวณ dose ได้เลย
+/// เช่น เบกกิ้งโซดา 1 ช้อนแกง → alkalinity +2.5 หยด
+model DosingCalibration {
+  id            Int        @id @default(autoincrement())
+  system        CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId      Int
+  substance     Substance  @relation(fields: [substanceId], references: [id])
+  substanceId   Int
+  parameter     WaterParam // พารามิเตอร์ที่สารนี้ไปมีผล
+  effectPerUnit Decimal    @db.Decimal(10, 4) // 1 หน่วยสาร → ค่าพารามิเตอร์เปลี่ยนเท่าไร (เช่น +2.5 หยด)
+  unit          String // หน่วยของสาร (ช้อนแกง/มล./กรัม) — ปกติตรงกับ substance.unit
+  note          String?    @db.Text
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@unique([systemId, substanceId, parameter])
+}
+
+enum RuleCondition {
+  BELOW_MIN
+  ABOVE_MAX
+}
+
+enum DosingActionType {
+  DOSE // เติมสาร (คำนวณปริมาณให้)
+  MEASURE_NEXT // แนะนำให้วัดค่าตัวถัดไป
+  NOTE // แค่ขึ้นข้อความเตือน
+}
+
+/// บันทึกการปรุงน้ำจริง (เติมสารไปแล้วเท่าไร) — ปิด Task ปรุงน้ำ
+model DosingRecord {
+  id          Int        @id @default(autoincrement())
+  system      CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId    Int
+  substance   Substance  @relation(fields: [substanceId], references: [id])
+  substanceId Int
+  amount      Decimal    @db.Decimal(8, 3)
+  unit        String
+  dosedAt     DateTime
+  waterTest   WaterTest? @relation(fields: [waterTestId], references: [id])
+  waterTestId Int?
+  task        Task?      @relation(fields: [taskId], references: [id])
+  taskId      Int?       @unique
+  note        String?
+  createdAt   DateTime   @default(now())
+}
+
+/// การเตรียม/เพาะเลี้ยงจุลินทรีย์ล่วงหน้า (ข้อ 2.3)
+model SubstancePrep {
+  id          Int        @id @default(autoincrement())
+  substance   Substance  @relation(fields: [substanceId], references: [id])
+  substanceId Int
+  status      PrepStatus @default(PREPARING)
+  startedAt   DateTime   @default(now())
+  readyAt     DateTime? // คาดว่าพร้อมใช้เมื่อไร (startedAt + prepLeadDays)
+  amount      Decimal?   @db.Decimal(8, 2)
+  unit        String?
+  note        String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+enum PrepStatus {
+  PREPARING // กำลังเพาะ
+  READY // พร้อมใช้
+  USED // ใช้ไปแล้ว
+  DISCARDED // ทิ้ง/เสีย
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  D. Reminder Engine  (ข้อ 1, 2.4, 3.3, 5, 6, 7)  ★ หัวใจของระบบ
+// ─────────────────────────────────────────────────────────────────────
+
+/// กฎการแจ้งเตือน — กำหนดว่า "อะไร / เมื่อไร / ตามจิกทุกกี่นาที"
+model ReminderRule {
+  id               Int           @id @default(autoincrement())
+  system           CrabSystem?   @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId         Int?
+  type             ReminderType
+  title            String
+  scheduleKind     ScheduleKind // ทุก N วัน / ทุก N เดือน / cron / ตาม event
+  intervalValue    Int? // จำนวน N (วัน/เดือน)
+  cronExpr         String? // เช่น "0 20 * * *" (ทุก 2 ทุ่ม)
+  triggerEvent     TriggerEvent? // กรณี EVENT เช่น หลังเติมน้ำจืด
+  timeOfDay        String? // "20:00"
+  leadDays         Int? // เตือนล่วงหน้า (สำหรับเตรียมจุลินทรีย์/ของใกล้หมด)
+  reNotifyEveryMin Int           @default(15) // ★ ตามจิกซ้ำทุกกี่นาทีจนกว่าจะทำ (ข้อ 6)
+  payload          Json? // config เพิ่ม เช่น { substanceId, splitCount: 3 }
+  active           Boolean       @default(true)
+  lastRunAt        DateTime?
+  nextRunAt        DateTime? // รอบถัดไปที่จะ generate Task
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  tasks Task[]
+}
+
+enum ReminderType {
+  WATER_TEST // วัดค่าน้ำ
+  DOSING // ปรุงน้ำ/เติมสาร
+  FRESHWATER_TOPUP // เติมน้ำจืด (ข้อ 2.4 แบ่ง ~3 ครั้ง)
+  FEEDING // ให้อาหาร
+  SCRAP_COLLECT // เก็บเศษอาหาร
+  FILTER_CLEAN // ล้างระบบกรอง (ข้อ 5)
+  SUBSTANCE_PREP // เตรียมจุลินทรีย์ (ข้อ 2.3)
+  RESTOCK // ของใกล้หมด ต้องไปซื้อ (อาหาร/biodigest)
+  CUSTOM
+}
+
+enum ScheduleKind {
+  INTERVAL_DAYS
+  INTERVAL_MONTHS
+  CRON
+  EVENT // ถูกสร้างเมื่อเกิดเหตุการณ์ ไม่ใช่ตามเวลา
+}
+
+enum TriggerEvent {
+  AFTER_FRESHWATER // หลังเติมน้ำจืด → วัดค่าน้ำ
+  AFTER_WATER_TEST // หลังวัดน้ำ → ปรุงน้ำ
+  AFTER_FEEDING // หลังให้อาหาร → เก็บเศษ
+}
+
+/// Task = งานจริง 1 ชิ้นที่ต้องทำ (instance) — สร้างจาก ReminderRule หรือจาก event
+/// สถานะจะเป็น PENDING จนกว่าจะมีการบันทึกข้อมูลที่เกี่ยวข้องมาปิดงาน
+model Task {
+  id        Int           @id @default(autoincrement())
+  rule      ReminderRule? @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  ruleId    Int?
+  system    CrabSystem?   @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId  Int?
+  user      User?         @relation(fields: [userId], references: [id])
+  userId    Int? // ผู้รับแจ้งเตือนงานนี้ (ถ้า null → ใช้เจ้าของ system)
+  type      ReminderType
+  title     String
+  detail    String?       @db.Text
+  dueAt     DateTime
+  status    TaskStatus    @default(PENDING)
+
+  completedAt DateTime?
+
+  // กลไกตามจิก (ข้อ 6)
+  lastNotifiedAt   DateTime?
+  notifyCount      Int       @default(0)
+  reNotifyEveryMin Int       @default(15)
+
+  // ลิงก์ record ที่มาปิดงานนี้ (polymorphic แบบเบาๆ)
+  linkType String? // "WaterTest" | "FeedingRecord" | "DosingRecord" | ...
+  linkId   Int?
+
+  payload Json?
+
+  // ลูกโซ่ Task (วัดน้ำ → ปรุงน้ำ)
+  parentTask   Task?  @relation("TaskChain", fields: [parentTaskId], references: [id])
+  parentTaskId Int?
+  childTasks   Task[] @relation("TaskChain")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  notifications Notification[]
+  waterTest     WaterTest?
+  dosingRecord  DosingRecord?
+
+  @@index([status, dueAt])
+}
+
+enum TaskStatus {
+  PENDING // ยังไม่ทำ
+  DONE // ทำแล้ว (มี record มาปิด)
+  SKIPPED // ข้าม
+  CANCELLED // ยกเลิก
+}
+
+/// ประวัติการส่งแจ้งเตือน (ข้อ 7 — Gmail ก่อน, เผื่อ Line ในอนาคต)
+model Notification {
+  id        Int          @id @default(autoincrement())
+  task      Task?        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskId    Int?
+  channel   NotifChannel @default(EMAIL)
+  toAddress String?
+  subject   String?
+  body      String?      @db.Text
+  status    NotifStatus  @default(SENT)
+  error     String?      @db.Text
+  sentAt    DateTime     @default(now())
+}
+
+enum NotifChannel {
+  EMAIL
+  LINE
+}
+
+enum NotifStatus {
+  SENT
+  FAILED
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  E. คู่ค้า & การซื้อขาย  (ข้อ 4)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ผู้ซื้อ/ผู้ขาย (เจ้าเดียวเป็นได้ทั้งคู่)
+model Contact {
+  id        Int         @id @default(autoincrement())
+  name      String
+  type      ContactType
+  phone     String?
+  lineId    String?
+  isRegular Boolean     @default(false) // ลูกค้าประจำ (favourite) — ล็อกออเดอร์ให้ได้ (4.3)
+  note      String?     @db.Text
+  active    Boolean     @default(true)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  transactions Transaction[]
+  outreachLogs OutreachLog[]
+  soldToUs     Crab[]        @relation("CrabSeller") // ปูที่เราซื้อจากเจ้านี้
+  boughtFromUs Crab[]        @relation("CrabBuyer") // ปูที่เจ้านี้ซื้อจากเรา
+  lockedCrabs  Crab[]        @relation("CrabLocked")
+}
+
+enum ContactType {
+  BUYER
+  SELLER
+  BOTH
+}
+
+/// การซื้อ/ขาย — status QUOTE ใช้คำนวณกำไรล่วงหน้าก่อนตกลงจริง (ข้อ 4.5)
+model Transaction {
+  id           Int       @id @default(autoincrement())
+  contact      Contact   @relation(fields: [contactId], references: [id])
+  contactId    Int
+  kind         TxnKind // ซื้อเข้า หรือ ขายออก
+  status       TxnStatus @default(QUOTE) // QUOTE → CONFIRMED → DONE
+  crab         Crab?     @relation(fields: [crabId], references: [id])
+  crabId       Int?
+  qty          Int       @default(1)
+  pricePerUnit Decimal   @db.Decimal(12, 2)
+  totalPrice   Decimal   @db.Decimal(12, 2)
+  costBasis    Decimal?  @db.Decimal(12, 2) // ต้นทุน (กรณีขาย ใช้คำนวณกำไร)
+  profit       Decimal?  @db.Decimal(12, 2) // กำไรสุทธิ (totalPrice - costBasis)
+  round        Int? // รอบการซื้อขาย (4.4)
+  occurredAt   DateTime?
+  note         String?   @db.Text
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  ledgerEntry LedgerEntry?
+}
+
+enum TxnKind {
+  BUY
+  SELL
+}
+
+enum TxnStatus {
+  QUOTE // ใบเสนอราคา (ไปถามราคามา ยังไม่ตกลง)
+  CONFIRMED // ตกลงแล้ว รอดำเนินการ
+  DONE // เสร็จสมบูรณ์
+  CANCELLED
+}
+
+/// ติดตามการไล่ทักคู่ค้าทีละเจ้าในแต่ละรอบ (ข้อ 4.4)
+model OutreachLog {
+  id          Int            @id @default(autoincrement())
+  contact     Contact        @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  contactId   Int
+  round       Int
+  kind        TxnKind // รอบนี้กำลังหาซื้อ หรือหาขาย
+  status      OutreachStatus @default(PENDING)
+  contactedAt DateTime?
+  note        String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@unique([contactId, round, kind])
+}
+
+enum OutreachStatus {
+  PENDING // ยังไม่ได้ทัก
+  CONTACTED // ทักแล้ว
+  HAS_STOCK // มีของ
+  NO_STOCK // ของหมด
+  DEALT // ตกลงซื้อ/ขายแล้ว
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  F. การเงิน — สมุดบัญชีรวม สำหรับ dashboard ต้นทุน/กำไร
+// ─────────────────────────────────────────────────────────────────────
+
+/// รายการเงินเข้า-ออกทุกประเภท (ซื้อปู/ขายปู/อาหาร/สาร/อุปกรณ์) รวมไว้ที่เดียว แทน Excel ที่กระจัดกระจาย
+model LedgerEntry {
+  id            Int          @id @default(autoincrement())
+  system        CrabSystem?  @relation(fields: [systemId], references: [id])
+  systemId      Int?
+  kind          LedgerKind // เข้า/ออก
+  category      String // CRAB_PURCHASE / CRAB_SALE / FOOD / SUBSTANCE / EQUIPMENT / OTHER
+  amount        Decimal      @db.Decimal(12, 2)
+  occurredAt    DateTime
+  transaction   Transaction? @relation(fields: [transactionId], references: [id])
+  transactionId Int?         @unique
+  note          String?      @db.Text
+  createdAt     DateTime     @default(now())
+}
+
+enum LedgerKind {
+  INCOME // เงินเข้า (ขายปู)
+  EXPENSE // เงินออก (ซื้อปู/อาหาร/สาร/อุปกรณ์)
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  G. คลังของ — แจ้งเตือนของใกล้หมด (อาหาร 1-2 สัปดาห์, biodigest)
+// ─────────────────────────────────────────────────────────────────────
+
+model InventoryItem {
+  id           Int               @id @default(autoincrement())
+  name         String
+  category     InventoryCategory
+  substance    Substance?        @relation(fields: [substanceId], references: [id])
+  substanceId  Int?              @unique
+  currentQty   Decimal           @default(0) @db.Decimal(10, 2)
+  unit         String
+  lowThreshold Decimal?          @db.Decimal(10, 2) // ต่ำกว่านี้ → สร้าง Task RESTOCK
+  note         String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+}
+
+enum InventoryCategory {
+  FOOD // อาหารปู (ข้อ 3.1)
+  SUBSTANCE // สาร/จุลินทรีย์
+  EQUIPMENT
+  OTHER
+}
