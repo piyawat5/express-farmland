@@ -55,6 +55,7 @@ export async function createInventory(input: CreateInventoryInput) {
       note: input.note ?? null,
     },
   });
+  await syncRestockTask(item);
   return item;
 }
 
@@ -74,7 +75,7 @@ export async function updateInventory(id: number, input: UpdateInventoryInput) {
       note: input.note === undefined ? undefined : input.note,
     },
   });
-  await closeRestockIfStocked(item);
+  await syncRestockTask(item);
   return item;
 }
 
@@ -83,7 +84,7 @@ export async function adjustInventory(id: number, delta: number) {
   const current = await getInventory(id);
   const next = Math.max(0, Math.round((num(current.currentQty) + delta) * 100) / 100);
   const item = await prisma.inventoryItem.update({ where: { id }, data: { currentQty: next } });
-  await closeRestockIfStocked(item);
+  await syncRestockTask(item);
   return item;
 }
 
@@ -97,18 +98,51 @@ export async function deleteInventory(id: number) {
   await prisma.inventoryItem.delete({ where: { id } });
 }
 
-/** ถ้าเติมของจนพ้นเกณฑ์แล้ว → ปิด Task RESTOCK ที่ค้างของชิ้นนั้น (ถือว่าซื้อเติมแล้ว) */
-async function closeRestockIfStocked(item: { id: number; currentQty: Prisma.Decimal; lowThreshold: Prisma.Decimal | null }) {
-  if (isLow(item)) return;
-  await prisma.task.updateMany({
+type RestockItem = {
+  id: number;
+  name: string;
+  currentQty: Prisma.Decimal | number;
+  unit: string;
+  lowThreshold: Prisma.Decimal | number | null;
+};
+
+/** สร้าง Task RESTOCK ให้ของชิ้นนี้ (กันซ้ำถ้ามี PENDING อยู่แล้ว) — คืน 1 ถ้าสร้างใหม่ */
+async function ensureRestockTask(item: RestockItem, now: Date, ownerId: number | null): Promise<number> {
+  const existing = await prisma.task.count({
     where: { status: 'PENDING', type: 'RESTOCK', linkType: 'InventoryItem', linkId: item.id },
-    data: { status: 'DONE', completedAt: new Date(), linkType: 'InventoryItem', linkId: item.id },
   });
+  if (existing > 0) return 0;
+  await createTask({
+    type: 'RESTOCK',
+    title: `ของใกล้หมด: ${item.name}`,
+    detail: `เหลือ ${num(item.currentQty)} ${item.unit} (ต่ำกว่าเกณฑ์ ${num(item.lowThreshold)} ${item.unit}) — ควรไปซื้อเพิ่ม`,
+    userId: ownerId,
+    dueAt: now,
+    linkType: 'InventoryItem',
+    linkId: item.id,
+  });
+  return 1;
 }
 
 /**
- * สร้าง Task RESTOCK สำหรับของที่ใกล้หมด (เรียกจาก scheduler.tick)
- * กันซ้ำ: ถ้ามี Task RESTOCK PENDING ของชิ้นนั้นค้างอยู่แล้ว → ข้าม
+ * sync Task RESTOCK ตามสถานะสต็อกล่าสุด (เรียกหลัง create/update/adjust):
+ *   ใกล้หมด → สร้าง Task ทันที (ไม่ต้องรอ cron)
+ *   พ้นเกณฑ์ → ปิด Task ที่ค้าง (ถือว่าซื้อเติมแล้ว)
+ */
+async function syncRestockTask(item: RestockItem) {
+  if (isLow(item)) {
+    const owner = await prisma.user.findFirst({ where: { active: true }, orderBy: { id: 'asc' } });
+    await ensureRestockTask(item, new Date(), owner?.id ?? null);
+  } else {
+    await prisma.task.updateMany({
+      where: { status: 'PENDING', type: 'RESTOCK', linkType: 'InventoryItem', linkId: item.id },
+      data: { status: 'DONE', completedAt: new Date(), linkType: 'InventoryItem', linkId: item.id },
+    });
+  }
+}
+
+/**
+ * กวาดของที่ใกล้หมดทั้งหมด → สร้าง Task RESTOCK (เรียกจาก scheduler.tick เป็น safety net)
  * ผูกผู้รับ = เจ้าของคนแรก (single user) เพื่อให้เมลเตือนมีปลายทาง
  */
 export async function generateRestockTasks(now: Date): Promise<number> {
@@ -119,20 +153,7 @@ export async function generateRestockTasks(now: Date): Promise<number> {
   const owner = await prisma.user.findFirst({ where: { active: true }, orderBy: { id: 'asc' } });
   let created = 0;
   for (const it of low) {
-    const existing = await prisma.task.count({
-      where: { status: 'PENDING', type: 'RESTOCK', linkType: 'InventoryItem', linkId: it.id },
-    });
-    if (existing > 0) continue;
-    await createTask({
-      type: 'RESTOCK',
-      title: `ของใกล้หมด: ${it.name}`,
-      detail: `เหลือ ${num(it.currentQty)} ${it.unit} (ต่ำกว่าเกณฑ์ ${num(it.lowThreshold)} ${it.unit}) — ควรไปซื้อเพิ่ม`,
-      userId: owner?.id ?? null,
-      dueAt: now,
-      linkType: 'InventoryItem',
-      linkId: it.id,
-    });
-    created++;
+    created += await ensureRestockTask(it, now, owner?.id ?? null);
   }
   return created;
 }
