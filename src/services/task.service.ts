@@ -53,6 +53,7 @@ export function findOpenTask(systemId: number, type: ReminderType) {
 export type CreateTaskInput = {
   systemId?: number | null;
   ruleId?: number | null;
+  userId?: number | null; // ถ้าระบุ → ใช้เป็นปลายทางตรง (เช่น RESTOCK ที่ไม่ผูกระบบ)
   type: ReminderType;
   title: string;
   detail?: string | null;
@@ -60,12 +61,14 @@ export type CreateTaskInput = {
   reNotifyEveryMin?: number;
   payload?: Prisma.InputJsonValue | null;
   parentTaskId?: number | null;
+  linkType?: string | null;
+  linkId?: number | null;
 };
 
-/** สร้าง Task — resolve ผู้รับแจ้งเตือนจากเจ้าของระบบให้อัตโนมัติ */
+/** สร้าง Task — resolve ผู้รับแจ้งเตือนจากเจ้าของระบบให้อัตโนมัติ (หรือ userId ที่ระบุ) */
 export async function createTask(input: CreateTaskInput) {
-  let userId: number | null = null;
-  if (input.systemId != null) {
+  let userId: number | null = input.userId ?? null;
+  if (userId == null && input.systemId != null) {
     const sys = await prisma.crabSystem.findUnique({
       where: { id: input.systemId },
       select: { ownerId: true },
@@ -84,6 +87,8 @@ export async function createTask(input: CreateTaskInput) {
       reNotifyEveryMin: input.reNotifyEveryMin ?? 15,
       payload: input.payload ?? undefined,
       parentTaskId: input.parentTaskId ?? null,
+      linkType: input.linkType ?? null,
+      linkId: input.linkId ?? null,
     },
   });
 }

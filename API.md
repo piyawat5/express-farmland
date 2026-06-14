@@ -233,6 +233,18 @@
 
 ---
 
+## G. คลังของ — InventoryItem (อาหาร/สาร/อุปกรณ์ + แจ้งเตือนใกล้หมด)
+| Method | Path | หมายเหตุ |
+|---|---|---|
+| GET | `/api/inventory?category&lowOnly` | list (`lowOnly=true` เฉพาะที่ใกล้หมด) |
+| POST | `/api/inventory` | `{ name*, category*(FOOD\|SUBSTANCE\|EQUIPMENT\|OTHER), unit*, currentQty?, lowThreshold?, substanceId?, note? }` |
+| GET | `/api/inventory/:id` | รายตัว |
+| PATCH | `/api/inventory/:id` | แก้ |
+| POST | `/api/inventory/:id/adjust` | `{ delta }` — บวก=ซื้อเข้า, ลบ=ใช้ไป (ไม่ต่ำกว่า 0) |
+| DELETE | `/api/inventory/:id` | ลบ |
+
+- **แจ้งเตือนอัตโนมัติ:** `scheduler.tick` เช็คของที่ `currentQty <= lowThreshold` → สร้าง Task `RESTOCK` (กันซ้ำ, ผูกเจ้าของ) → เข้าเมลสรุป; เติมจนพ้นเกณฑ์ → ปิด Task ให้อัตโนมัติ
+
 ## Health
 | Method | Path | |
 |---|---|---|

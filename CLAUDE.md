@@ -77,9 +77,10 @@
 
 **งานถัดไป:**
 1. **Frontend (Vue.js, แยก repo)** ⭐ — Backend ครบทุก phase แล้ว
-2. **ค้าง backend (option, ทำตอนกลับมาแก้):**
-   - โมดูล G `InventoryItem` ยังไม่มี service/route เลย — RESTOCK reminder type มีแต่ยังไม่มีอะไรจัดการคลัง (จะทำตอนผู้ใช้ต้องการ)
-   - `FRESHWATER_TOPUP` แบบ "นับวัน" ต่อระบบ (เช่น 12 วัน, แบ่ง 3 ครั้ง MIN→MAX `payload.splitCount`), เตือนเตรียมจุลินทรีย์ตาม `prepLeadDays`, RESTOCK จาก `InventoryItem.lowThreshold`
+2. **โมดูล G (คลังของ) เสร็จแล้ว** ✅ — `inventory.service.ts` (CRUD + `adjustInventory` delta + `generateRestockTasks`) + `routes/inventory.ts` (mount `/api/inventory`, มี `POST /:id/adjust`); `scheduler.tick` เรียก `generateRestockTasks` → ของที่ `currentQty<=lowThreshold` สร้าง Task `RESTOCK` (กันซ้ำ, ผูก `linkType:'InventoryItem'`+owner เป็นปลายทางเมล); เติมพ้นเกณฑ์ → ปิด Task อัตโนมัติ (`closeRestockIfStocked`); `createTask` เพิ่ม `userId`/`linkType`/`linkId`; **ไม่ต้อง migrate** (model G มีอยู่แล้ว)
+3. **ค้าง backend (option):**
+   - `FRESHWATER_TOPUP` แบบ "นับวัน" ต่อระบบ (เช่น 12 วัน, แบ่ง 3 ครั้ง MIN→MAX `payload.splitCount`), เตือนเตรียมจุลินทรีย์ตาม `prepLeadDays`
+   - `SubstancePrep` (จับเวลาเพาะจุลินทรีย์) ยังไม่มี service/route
    - ยังไม่ได้ทดสอบ server จริงตั้งแต่ Phase 4 (typecheck ผ่านอย่างเดียว)
 
 ## ภาพรวมโปรเจกต์

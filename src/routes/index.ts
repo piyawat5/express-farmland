@@ -7,6 +7,7 @@ import { substanceRouter, dosingSystemRouter, calibrationRouter, ruleRouter } fr
 import { schedulerRouter, reminderRuleRouter, taskRouter, systemEventRouter } from './scheduler';
 import { contactRouter, transactionRouter, outreachRouter } from './commerce';
 import { ledgerRouter, dashboardRouter } from './finance';
+import inventoryRoutes from './inventory';
 
 const api = Router();
 
@@ -37,5 +38,7 @@ api.use('/outreach', outreachRouter);
 // F. การเงิน (สมุดบัญชี + dashboard/analytics)
 api.use('/ledger', ledgerRouter);
 api.use('/dashboard', dashboardRouter);
+// G. คลังของ (อาหาร/สาร/อุปกรณ์ + แจ้งเตือนใกล้หมด)
+api.use('/inventory', inventoryRoutes);
 
 export default api;
