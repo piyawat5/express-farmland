@@ -141,11 +141,17 @@ export async function crabAnalytics({ systemId }: { systemId?: number }) {
 
 // ── ภาพรวม (overview) — การ์ดสรุปหน้าแรก ───────────────────────────────
 export async function overview({ systemId }: { systemId?: number }) {
+  // งานค้าง: นับงานของระบบที่เลือก + งานที่ไม่ผูกระบบ (เช่น RESTOCK ของใกล้หมด systemId=null)
+  // ให้ตรงกับ badge ที่เมนู (ซึ่งนับงาน PENDING ทั้งหมด) — กันตัวเลข dashboard ไม่ตรง
+  const pendingWhere = systemId
+    ? { status: 'PENDING' as const, OR: [{ systemId }, { systemId: null }] }
+    : { status: 'PENDING' as const };
+
   const [systemCount, crabByStatus, boxByStatus, pendingTasks, finance] = await Promise.all([
     systemId ? Promise.resolve(1) : prisma.crabSystem.count(),
     prisma.crab.groupBy({ by: ['status'], where: { systemId }, _count: { _all: true } }),
     prisma.crabBox.groupBy({ by: ['status'], where: { systemId }, _count: { _all: true } }),
-    prisma.task.count({ where: { systemId, status: 'PENDING' } }),
+    prisma.task.count({ where: pendingWhere }),
     financeSummary({ systemId }),
   ]);
 

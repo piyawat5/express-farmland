@@ -198,6 +198,7 @@ prisma/schema.prisma
 > ค่าตัวเลขจริง (min/max, ปริมาณสาร, รอบวัน) ให้ถามผู้ใช้ตอนทำ seed เพราะผู้ใช้ custom เอง
 
 ## Log การเปลี่ยนแปลง
+- **2026-06-15** — แก้ตามฟีดแบ็คผู้ใช้ (backend เฉพาะ): `dashboard.overview()` นับงานค้างใหม่ = งานของระบบ + งานที่ไม่ผูกระบบ (`OR systemId=null` เช่น RESTOCK) ให้ตรงกับ badge ที่เมนู (เดิมกรอง systemId อย่างเดียว → ตัวเลขไม่ตรง). ล็อกปูให้ลูกค้าประจำ (ข้อ 1) ใช้ `Crab.lockedForBuyerId` + route เดิม — **ไม่ต้อง migrate**. Plesk error `curl (3)` = URL มีช่องว่างท้าย + `SCHEDULER_SECRET` ใน Plesk ไม่ตรง `.env` (config ไม่ใช่บั๊กโค้ด)
 - **2026-06-14** — เริ่มโปรเจกต์ Phase 1: scaffold + schema 7 โมดูล + health check
 - **2026-06-14** — เพิ่ม `User` (เจ้าของระบบ) → ปลายทางแจ้งเตือน dynamic; เปลี่ยน email เป็น Host Atom SMTP (`EMAIL_USER`/`EMAIL_PASS`)
 - **2026-06-14** — รัน migration `init` สำเร็จบน MySQL remote (`familysi_farmland`), ทดสอบ `/api/health` + `/api/health/db` ผ่าน — Phase 1 ✅
