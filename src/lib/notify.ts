@@ -7,10 +7,23 @@ type RecipientInfo = {
   user?: { email: string; notifyByEmail: boolean } | null;
   system?: { owner?: { email: string; notifyByEmail: boolean } | null } | null;
 };
-function resolveRecipient(t: RecipientInfo): string | null {
+function resolveRecipient(t: RecipientInfo, fallback?: string | null): string | null {
   const userEmail = t.user?.notifyByEmail === false ? null : t.user?.email;
   const ownerEmail = t.system?.owner?.notifyByEmail === false ? null : t.system?.owner?.email;
-  return userEmail ?? ownerEmail ?? env.MAIL_TO ?? null;
+  return userEmail ?? ownerEmail ?? fallback ?? env.MAIL_TO ?? null;
+}
+
+/**
+ * ปลายทางสำรองสุดท้าย — อีเมลของ user คนแรกที่ active (single user)
+ * ใช้กับงานเดิมที่ระบบยังไม่มี owner (userId/owner เป็น null) เพื่อไม่ให้ digest ข้ามงานแบบเงียบ
+ */
+async function fallbackRecipient(): Promise<string | null> {
+  const owner = await prisma.user.findFirst({
+    where: { active: true, notifyByEmail: true },
+    orderBy: { id: 'asc' },
+    select: { email: true },
+  });
+  return owner?.email ?? env.MAIL_TO ?? null;
 }
 
 /**
@@ -28,7 +41,7 @@ export async function notifyTask(taskId: number): Promise<boolean> {
   });
   if (!task) return false;
 
-  const to = resolveRecipient(task);
+  const to = resolveRecipient(task, await fallbackRecipient());
 
   const nth = task.notifyCount + 1;
   const subject = `🦀 ${nth > 1 ? `[เตือนซ้ำครั้งที่ ${nth}] ` : ''}${task.title}`;
@@ -113,10 +126,12 @@ export async function notifyPendingDigest(now = new Date()): Promise<DigestResul
 
   if (tasks.length === 0) return { pending: 0, recipients: 0, throttled: 0, sent: false };
 
+  const fallback = await fallbackRecipient();
+
   // จัดกลุ่มงานตามปลายทาง (เผื่อหลายระบบ/หลาย user) — ปกติ single user = กลุ่มเดียว
   const groups = new Map<string, typeof tasks>();
   for (const t of tasks) {
-    const to = resolveRecipient(t);
+    const to = resolveRecipient(t, fallback);
     if (!to) continue;
     const list = groups.get(to) ?? [];
     list.push(t);

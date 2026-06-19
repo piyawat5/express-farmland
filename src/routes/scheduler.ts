@@ -156,6 +156,16 @@ taskRouter.patch(
   }),
 );
 
+// กดปุ่ม "ทำเสร็จแล้ว" — ปิดงานตามรอบที่ไม่มี record มาปิด (ให้อาหาร/เติมน้ำจืด/ล้างกรอง ฯลฯ)
+// งานวัดน้ำ/ปรุงน้ำ/ของใกล้หมด จะถูกบล็อก (ต้องปิดจากการบันทึกข้อมูลจริง)
+taskRouter.post(
+  '/:id/complete',
+  validate({ params: idParam }),
+  asyncHandler(async (req, res) => {
+    res.json(serialize(await tasks.completeTaskManually(Number(req.params.id))));
+  }),
+);
+
 // บังคับส่งแจ้งเตือนทันที (debug / ทดสอบเมล)
 taskRouter.post(
   '/:id/notify',

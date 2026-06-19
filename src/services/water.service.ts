@@ -116,20 +116,35 @@ export async function createWaterTest(data: Prisma.WaterTestUncheckedCreateInput
 
   // 3) event chain: ถ้ามีค่าหลุดเป้า → สร้าง Task ปรุงน้ำ (กันซ้ำถ้ายังมีงานปรุงน้ำค้าง)
   let dosingTaskId: number | null = null;
+  let closedDosingTaskId: number | null = null;
   const actionable = recommendations.filter((r) => r.status !== 'OK' && r.status !== 'NO_TARGET');
-  if (actionable.length > 0 && !(await findOpenTask(waterTest.systemId, 'DOSING'))) {
-    const task = await createTask({
-      systemId: waterTest.systemId,
-      type: 'DOSING',
-      title: 'ปรุงน้ำตามผลวัดล่าสุด',
-      detail: summarizeRecommendations(actionable),
-      parentTaskId: openTask?.id ?? null,
-      payload: { waterTestId: waterTest.id },
-    });
-    dosingTaskId = task.id;
+  const openDosing = await findOpenTask(waterTest.systemId, 'DOSING');
+  if (actionable.length > 0) {
+    // ยังมีค่าหลุดเป้า → ต้องปรุงน้ำ (ถ้ายังไม่มีงานปรุงน้ำค้างอยู่)
+    if (!openDosing) {
+      const task = await createTask({
+        systemId: waterTest.systemId,
+        type: 'DOSING',
+        title: 'ปรุงน้ำตามผลวัดล่าสุด',
+        detail: summarizeRecommendations(actionable),
+        parentTaskId: openTask?.id ?? null,
+        payload: { waterTestId: waterTest.id },
+      });
+      dosingTaskId = task.id;
+    }
+  } else if (openDosing) {
+    // ทุกค่าตรงเกณฑ์แล้ว แต่ยังมีงานปรุงน้ำเก่าค้างอยู่ → ปิดงานนั้น (ไม่ต้องปรุงแล้ว)
+    await closeTaskByRecord(openDosing.id, { linkType: 'WaterTest', linkId: waterTest.id });
+    closedDosingTaskId = openDosing.id;
   }
 
-  return { waterTest, recommendations, closedTaskId: openTask?.id ?? null, dosingTaskId };
+  return {
+    waterTest,
+    recommendations,
+    closedTaskId: openTask?.id ?? null,
+    dosingTaskId,
+    closedDosingTaskId,
+  };
 }
 
 export async function updateWaterTest(id: number, data: Prisma.WaterTestUncheckedUpdateInput) {

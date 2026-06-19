@@ -155,7 +155,8 @@
 |---|---|---|
 | GET | `/api/tasks?systemId&status&type` | list งาน |
 | GET | `/api/tasks/:id` | รายตัว |
-| PATCH | `/api/tasks/:id` | `{ status }` — เปลี่ยนสถานะ manual (**ห้ามตั้ง DONE ทางนี้** — DONE ต้องมาจากการบันทึก record จริง) |
+| PATCH | `/api/tasks/:id` | `{ status }` — เปลี่ยนสถานะ manual (**ห้ามตั้ง DONE ทางนี้** — DONE ต้องมาจากการบันทึก record จริง หรือปุ่ม "ทำเสร็จแล้ว") |
+| POST | `/api/tasks/:id/complete` | ปุ่ม "ทำเสร็จแล้ว" — ปิดงานตามรอบที่เตือนเฉยๆ (ให้อาหาร/เติมน้ำจืด/ล้างกรอง ฯลฯ) → DONE; **บล็อก** type `WATER_TEST`/`DOSING`/`RESTOCK` (ต้องปิดจาก record จริง) |
 | POST | `/api/tasks/:id/notify` | บังคับส่งเตือนทันที (debug) → `{ sent: boolean }` |
 
 - `status`: `PENDING` `DONE` `SKIPPED` `CANCELLED`

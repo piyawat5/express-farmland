@@ -75,6 +75,12 @@ export async function createTask(input: CreateTaskInput) {
     });
     userId = sys?.ownerId ?? null;
   }
+  // ทุก Task ต้องมีปลายทางแจ้งเตือน — ถ้ายัง resolve ไม่ได้ (ระบบไม่มี owner)
+  // fallback ไปหา user คนแรกที่ active (single user) ไม่งั้น digest จะข้ามงานนี้แบบเงียบ
+  if (userId == null) {
+    const owner = await prisma.user.findFirst({ where: { active: true }, orderBy: { id: 'asc' } });
+    userId = owner?.id ?? null;
+  }
   return prisma.task.create({
     data: {
       systemId: input.systemId ?? null,
@@ -129,10 +135,32 @@ export async function updateTaskStatus(id: number, status: TaskStatus) {
   const task = await prisma.task.findUnique({ where: { id } });
   if (!task) throw notFound('ไม่พบงานนี้');
   if (status === 'DONE') {
-    throw badRequest('การปิดงาน (DONE) ต้องมาจากการบันทึกข้อมูลจริง เช่นบันทึกผลวัดน้ำ');
+    throw badRequest('การปิดงาน (DONE) ต้องมาจากการบันทึกข้อมูลจริง หรือกดปุ่ม "ทำเสร็จแล้ว" (สำหรับงานตามรอบ)');
   }
   return prisma.task.update({
     where: { id },
     data: { status, completedAt: status === 'PENDING' ? null : new Date() },
+  });
+}
+
+// งานที่ "ปิดได้ด้วยการบันทึก record จริง" เท่านั้น — ห้ามกดทำเสร็จมือเปล่า
+//   WATER_TEST → ปิดด้วย WaterTest, DOSING → ปิดเองเมื่อวัดน้ำได้ค่าตรงเกณฑ์, RESTOCK → ปิดเมื่อเติมของในคลัง
+// งานที่เหลือ (ให้อาหาร/เติมน้ำจืด/เก็บเศษ/ล้างกรอง/เตรียมจุลินทรีย์/อื่นๆ) เป็นงาน "เตือนเฉยๆ"
+// ไม่มี record มาปิด → ให้ผู้ใช้กดปุ่ม "ทำเสร็จแล้ว" เองได้
+const RECORD_CLOSED_TYPES: ReminderType[] = ['WATER_TEST', 'DOSING', 'RESTOCK'];
+
+/** ปิดงานตามรอบแบบ manual ("ทำเสร็จแล้ว") — เฉพาะงานเตือนเฉยๆ ที่ไม่มี record มาปิด */
+export async function completeTaskManually(id: number) {
+  const task = await prisma.task.findUnique({ where: { id } });
+  if (!task) throw notFound('ไม่พบงานนี้');
+  if (RECORD_CLOSED_TYPES.includes(task.type)) {
+    throw badRequest(
+      'งานนี้ปิดได้จากการบันทึกข้อมูลจริง (วัดน้ำ/ปรุงน้ำ/เติมของในคลัง) ไม่ใช่กดทำเสร็จมือเปล่า',
+    );
+  }
+  if (task.status !== 'PENDING') return task;
+  return prisma.task.update({
+    where: { id },
+    data: { status: 'DONE', completedAt: new Date() },
   });
 }

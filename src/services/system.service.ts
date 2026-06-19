@@ -28,8 +28,15 @@ export async function getSystem(id: number) {
   return system;
 }
 
-export function createSystem(data: Prisma.CrabSystemUncheckedCreateInput) {
-  return prisma.crabSystem.create({ data });
+export async function createSystem(data: Prisma.CrabSystemUncheckedCreateInput) {
+  // ถ้าไม่ระบุเจ้าของ → ผูกกับ user คนแรกที่ active (single user)
+  // สำคัญต่อการแจ้งเตือน: Task ของระบบ resolve ปลายทางอีเมลจาก owner ของระบบ
+  let ownerId = data.ownerId ?? null;
+  if (ownerId == null) {
+    const owner = await prisma.user.findFirst({ where: { active: true }, orderBy: { id: 'asc' } });
+    ownerId = owner?.id ?? null;
+  }
+  return prisma.crabSystem.create({ data: { ...data, ownerId } });
 }
 
 export async function updateSystem(id: number, data: Prisma.CrabSystemUncheckedUpdateInput) {

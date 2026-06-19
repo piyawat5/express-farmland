@@ -198,6 +198,12 @@ prisma/schema.prisma
 > ค่าตัวเลขจริง (min/max, ปริมาณสาร, รอบวัน) ให้ถามผู้ใช้ตอนทำ seed เพราะผู้ใช้ custom เอง
 
 ## Log การเปลี่ยนแปลง
+- **2026-06-19** — แก้บั๊กแจ้งเตือนตามฟีดแบ็ค (4 ข้อ):
+  1. **(ข้อ 1) เวลาแจ้งเตือน** — กฎ INTERVAL_DAYS/MONTHS ที่ไม่ใส่ `timeOfDay` เดิม `dueAt` อิงเวลาตอนสร้างกฎ → fix `computeNextRunAt` default `'08:00'` (`DEFAULT_TIME_OF_DAY`); + ตั้ง `process.env.TZ='Asia/Bangkok'` ใน `config/env.ts` (host เป็น UTC ทำให้ cron `0 20 * * *` + setHours เพี้ยน 7 ชม.) — ผู้ใช้ยังเลือกเวลาเองได้ผ่าน `timeOfDay`
+  2. **(ข้อ 2) digest เตือนแค่ 2 รายการ** — root cause: ระบบ id 2/3 (สร้างผ่านหน้าเว็บ) `ownerId=null` → Task (systemId set, userId=null) resolve ปลายทางอีเมลไม่ได้ → `notifyPendingDigest` ทำ `if(!to) continue` ข้ามเงียบ (RESTOCK รอด เพราะตั้ง userId ตรงๆ). Fix: `createTask` fallback userId→user active คนแรก; `createSystem` default ownerId→user active คนแรก; `notify.ts` เพิ่ม `fallbackRecipient()` ส่งให้ `resolveRecipient`; **backfill DB จริง**: set ownerId ให้ 2 ระบบ + userId ให้ 5 task ค้าง
+  3. **(ข้อ 3) ปิดงานตามรอบ** — เพิ่ม `completeTaskManually` + `POST /api/tasks/:id/complete` (ปุ่ม "ทำเสร็จแล้ว") สำหรับงานเตือนเฉยๆ; **บล็อก** type `WATER_TEST`/`DOSING`/`RESTOCK` (ปิดจาก record จริง); `createWaterTest` ปิด Task DOSING ที่ค้างอัตโนมัติเมื่อค่าทุกตัวกลับเข้าเกณฑ์ (คืน `closedDosingTaskId`). Frontend: ปุ่ม "ทำเสร็จแล้ว" ใน TasksView
+  4. **(ข้อ 4) "0 ขีด"** — ไม่ใช่บั๊ก: weightG เก็บเป็นกรัม, frontend แปลง ÷100 → 1.5 ก. = 0 ขีดจริง (data entry ผู้ใช้)
+  - **ไม่ต้อง migrate** (ไม่แตะ schema); typecheck ผ่านทั้ง backend + frontend (vue-tsc)
 - **2026-06-15** — แก้ตามฟีดแบ็คผู้ใช้ (backend เฉพาะ): `dashboard.overview()` นับงานค้างใหม่ = งานของระบบ + งานที่ไม่ผูกระบบ (`OR systemId=null` เช่น RESTOCK) ให้ตรงกับ badge ที่เมนู (เดิมกรอง systemId อย่างเดียว → ตัวเลขไม่ตรง). ล็อกปูให้ลูกค้าประจำ (ข้อ 1) ใช้ `Crab.lockedForBuyerId` + route เดิม — **ไม่ต้อง migrate**. Plesk error `curl (3)` = URL มีช่องว่างท้าย + `SCHEDULER_SECRET` ใน Plesk ไม่ตรง `.env` (config ไม่ใช่บั๊กโค้ด)
 - **2026-06-14** — เริ่มโปรเจกต์ Phase 1: scaffold + schema 7 โมดูล + health check
 - **2026-06-14** — เพิ่ม `User` (เจ้าของระบบ) → ปลายทางแจ้งเตือน dynamic; เปลี่ยน email เป็น Host Atom SMTP (`EMAIL_USER`/`EMAIL_PASS`)

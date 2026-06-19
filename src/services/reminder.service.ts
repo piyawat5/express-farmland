@@ -6,6 +6,10 @@ import { createTaskFromRule } from './task.service';
 
 // ── โมดูล D: ReminderRule = กฎแจ้งเตือน (อะไร/เมื่อไร/ตามจิกทุกกี่นาที) ──
 
+// เวลาเริ่มต้นของงานที่ตั้งแบบ "ทุก N วัน/เดือน" โดยไม่ระบุเวลา → ฟิกไว้ 08:00 น. (เวลาไทย)
+// กันไม่ให้ dueAt ไปอิงเวลาตอนที่กดสร้างกฎ (เช่น 23:47) ซึ่งผู้ใช้ไม่ได้ตั้งใจ
+const DEFAULT_TIME_OF_DAY = '08:00';
+
 const addDays = (d: Date, n: number) => {
   const out = new Date(d.getTime());
   out.setDate(out.getDate() + n);
@@ -40,27 +44,23 @@ type ScheduleFields = Pick<
  */
 export function computeNextRunAt(rule: ScheduleFields, after: Date): Date | null {
   const interval = rule.intervalValue ?? 1;
+  // ถ้าไม่ระบุเวลา → ใช้ 08:00 (ผู้ใช้เลือกเวลาเองได้ผ่าน timeOfDay)
+  const timeOfDay = rule.timeOfDay || DEFAULT_TIME_OF_DAY;
 
   switch (rule.scheduleKind) {
     case 'CRON':
       return rule.cronExpr ? nextCronAfter(rule.cronExpr, after) : null;
 
     case 'INTERVAL_DAYS': {
-      if (rule.timeOfDay) {
-        let c = applyTimeOfDay(after, rule.timeOfDay);
-        while (c <= after) c = addDays(c, interval);
-        return c;
-      }
-      return addDays(after, interval);
+      let c = applyTimeOfDay(after, timeOfDay);
+      while (c <= after) c = addDays(c, interval);
+      return c;
     }
 
     case 'INTERVAL_MONTHS': {
-      if (rule.timeOfDay) {
-        let c = applyTimeOfDay(after, rule.timeOfDay);
-        while (c <= after) c = addMonths(c, interval);
-        return c;
-      }
-      return addMonths(after, interval);
+      let c = applyTimeOfDay(after, timeOfDay);
+      while (c <= after) c = addMonths(c, interval);
+      return c;
     }
 
     case 'EVENT':

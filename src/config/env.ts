@@ -3,6 +3,12 @@ import { z } from 'zod';
 
 dotenv.config();
 
+// ── Timezone ─────────────────────────────────────────────────────────
+// host (Plesk) อาจรันเป็น UTC → cron "0 20 * * *" และ default 08:00 จะเพี้ยน 7 ชม.
+// บังคับ process timezone เป็นเวลาไทยเสมอ (single user ไทย) — ตั้งก่อนใช้ Date ใดๆ
+// override ได้ผ่าน env TZ ถ้าจำเป็น
+process.env.TZ = process.env.TZ || 'Asia/Bangkok';
+
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().default(3000),
