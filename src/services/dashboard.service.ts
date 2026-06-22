@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import type { AuthUser } from './auth.service';
+import { isAdmin, ownerWhere, systemScopeWhere } from '../lib/scope';
 
 // ── โมดูล F: Dashboard / analytics ─────────────────────────────────────
 //
@@ -19,9 +21,9 @@ function dateRange(from?: Date, to?: Date): Prisma.DateTimeFilter | undefined {
 // ── สรุปการเงิน (จาก LedgerEntry) ──────────────────────────────────────
 export type FinanceQuery = { systemId?: number; from?: Date; to?: Date };
 
-export async function financeSummary({ systemId, from, to }: FinanceQuery) {
+export async function financeSummary(user: AuthUser, { systemId, from, to }: FinanceQuery) {
   const entries = await prisma.ledgerEntry.findMany({
-    where: { systemId, occurredAt: dateRange(from, to) },
+    where: { ...ownerWhere(user), systemId, occurredAt: dateRange(from, to) },
     orderBy: { occurredAt: 'asc' },
   });
 
@@ -74,10 +76,11 @@ export async function financeSummary({ systemId, from, to }: FinanceQuery) {
 }
 
 // ── วิเคราะห์การขุนปู (pain point #3) ──────────────────────────────────
-export async function crabAnalytics({ systemId }: { systemId?: number }) {
+export async function crabAnalytics(user: AuthUser, { systemId }: { systemId?: number }) {
+  const scope = await systemScopeWhere(user, systemId); // จำกัดเฉพาะระบบของ user
   // ปูที่ขายแล้ว — วิเคราะห์ "คุ้มไหม": กำไร เทียบ ระยะเวลาเลี้ยง / น้ำหนัก / ความแน่น
   const sold = await prisma.crab.findMany({
-    where: { systemId, status: 'SOLD' },
+    where: { ...scope, status: 'SOLD' },
     orderBy: { sellDate: 'desc' },
   });
 
@@ -121,7 +124,7 @@ export async function crabAnalytics({ systemId }: { systemId?: number }) {
   // นับปูที่ยังอยู่ในระบบ แยกตามสถานะ
   const byStatusRaw = await prisma.crab.groupBy({
     by: ['status'],
-    where: { systemId },
+    where: scope,
     _count: { _all: true },
   });
   const byStatus = Object.fromEntries(byStatusRaw.map((r) => [r.status, r._count._all]));
@@ -140,19 +143,20 @@ export async function crabAnalytics({ systemId }: { systemId?: number }) {
 }
 
 // ── ภาพรวม (overview) — การ์ดสรุปหน้าแรก ───────────────────────────────
-export async function overview({ systemId }: { systemId?: number }) {
-  // งานค้าง: นับงานของระบบที่เลือก + งานที่ไม่ผูกระบบ (เช่น RESTOCK ของใกล้หมด systemId=null)
-  // ให้ตรงกับ badge ที่เมนู (ซึ่งนับงาน PENDING ทั้งหมด) — กันตัวเลข dashboard ไม่ตรง
+export async function overview(user: AuthUser, { systemId }: { systemId?: number }) {
+  const scope = await systemScopeWhere(user, systemId); // จำกัดเฉพาะระบบของ user
+  // งานค้าง: นับงานของ user (scope ด้วย userId) — งานของระบบที่เลือก + งานที่ไม่ผูกระบบ (RESTOCK ฯลฯ)
+  const userWhere = isAdmin(user) ? {} : { userId: user.id };
   const pendingWhere = systemId
-    ? { status: 'PENDING' as const, OR: [{ systemId }, { systemId: null }] }
-    : { status: 'PENDING' as const };
+    ? { status: 'PENDING' as const, ...userWhere, OR: [{ systemId }, { systemId: null }] }
+    : { status: 'PENDING' as const, ...userWhere };
 
   const [systemCount, crabByStatus, boxByStatus, pendingTasks, finance] = await Promise.all([
-    systemId ? Promise.resolve(1) : prisma.crabSystem.count(),
-    prisma.crab.groupBy({ by: ['status'], where: { systemId }, _count: { _all: true } }),
-    prisma.crabBox.groupBy({ by: ['status'], where: { systemId }, _count: { _all: true } }),
+    systemId ? Promise.resolve(1) : prisma.crabSystem.count({ where: ownerWhere(user) }),
+    prisma.crab.groupBy({ by: ['status'], where: scope, _count: { _all: true } }),
+    prisma.crabBox.groupBy({ by: ['status'], where: scope, _count: { _all: true } }),
     prisma.task.count({ where: pendingWhere }),
-    financeSummary({ systemId }),
+    financeSummary(user, { systemId }),
   ]);
 
   return {

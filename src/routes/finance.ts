@@ -39,7 +39,7 @@ ledgerRouter.get(
   validate({ query: ledgerQuery }),
   asyncHandler(async (req, res) => {
     const { systemId, kind, category, from, to } = req.query as z.infer<typeof ledgerQuery>;
-    res.json(serialize(await ledgerSvc.listLedger({ systemId, kind, category, from, to })));
+    res.json(serialize(await ledgerSvc.listLedger(req.user!, { systemId, kind, category, from, to })));
   }),
 );
 
@@ -47,7 +47,7 @@ ledgerRouter.post(
   '/',
   validate({ body: ledgerBody }),
   asyncHandler(async (req, res) => {
-    res.status(201).json(serialize(await ledgerSvc.createLedger(req.body)));
+    res.status(201).json(serialize(await ledgerSvc.createLedger(req.user!, req.body)));
   }),
 );
 
@@ -55,7 +55,7 @@ ledgerRouter.get(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await ledgerSvc.getLedger(Number(req.params.id))));
+    res.json(serialize(await ledgerSvc.getLedger(Number(req.params.id), req.user!)));
   }),
 );
 
@@ -63,7 +63,7 @@ ledgerRouter.patch(
   '/:id',
   validate({ params: idParam, body: ledgerBody.partial() }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await ledgerSvc.updateLedger(Number(req.params.id), req.body)));
+    res.json(serialize(await ledgerSvc.updateLedger(Number(req.params.id), req.user!, req.body)));
   }),
 );
 
@@ -71,7 +71,7 @@ ledgerRouter.delete(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    await ledgerSvc.deleteLedger(Number(req.params.id));
+    await ledgerSvc.deleteLedger(Number(req.params.id), req.user!);
     res.status(204).end();
   }),
 );
@@ -94,7 +94,7 @@ dashboardRouter.get(
   validate({ query: systemQuery }),
   asyncHandler(async (req, res) => {
     const { systemId } = req.query as z.infer<typeof systemQuery>;
-    res.json(serialize(await dashboardSvc.overview({ systemId })));
+    res.json(serialize(await dashboardSvc.overview(req.user!, { systemId })));
   }),
 );
 
@@ -103,7 +103,7 @@ dashboardRouter.get(
   validate({ query: financeQuery }),
   asyncHandler(async (req, res) => {
     const { systemId, from, to } = req.query as z.infer<typeof financeQuery>;
-    res.json(serialize(await dashboardSvc.financeSummary({ systemId, from, to })));
+    res.json(serialize(await dashboardSvc.financeSummary(req.user!, { systemId, from, to })));
   }),
 );
 
@@ -112,6 +112,6 @@ dashboardRouter.get(
   validate({ query: systemQuery }),
   asyncHandler(async (req, res) => {
     const { systemId } = req.query as z.infer<typeof systemQuery>;
-    res.json(serialize(await dashboardSvc.crabAnalytics({ systemId })));
+    res.json(serialize(await dashboardSvc.crabAnalytics(req.user!, { systemId })));
   }),
 );

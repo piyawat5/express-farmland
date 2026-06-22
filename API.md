@@ -11,14 +11,39 @@
 - **Content-Type:** `application/json` (body limit 1mb)
 - **เงิน/Decimal:** backend คืนเป็น **number** เสมอ (แปลง `Prisma.Decimal` ให้แล้ว) — frontend ไม่ต้อง parse
 - **วันที่:** คืนเป็น ISO string (เช่น `"2026-06-14T13:00:00.000Z"`); ส่งเข้าได้ทั้ง ISO string / date
-- **ยังไม่มี auth/login** (single-user) — ยกเว้น `/scheduler/tick` ที่ต้องใช้ secret
+- **ต้อง login (ข้อ 1):** ทุก endpoint ใต้ `/api` (ยกเว้น `/api/health*`, `/api/auth/*`, `/api/scheduler/tick`) ต้องแนบ header `Authorization: Bearer <accessToken>` — ไม่มี/หมดอายุ → `401`
+- **สิทธิ์ (RBAC):** อ่าน (GET) ได้ทุก user ที่ login; **แก้ไข** (POST/PATCH/PUT/DELETE) ระบบปู/กล่อง/ปู/น้ำ/ปรุงน้ำ ได้เฉพาะ **admin** หรือ **เจ้าของระบบ** (`CrabSystem.ownerId === user.id`) ไม่งั้น `403`
+
+### Auth — `/api/auth` (ไม่ต้อง login ยกเว้น `/me`)
+| Method | Path | Body | คืน |
+|---|---|---|---|
+| POST | `/api/auth/register` | `{ email*, password*(≥8), name? }` | `{ accessToken, refreshToken, user }` (role=FARM_OWNER) |
+| POST | `/api/auth/login` | `{ email*, password* }` | `{ accessToken, refreshToken, user }` |
+| POST | `/api/auth/refresh` | `{ refreshToken* }` | `{ accessToken, refreshToken, user }` (rotate — token เดิมใช้ไม่ได้อีก) |
+| POST | `/api/auth/logout` | `{ refreshToken? }` | `204` (revoke refresh token) |
+| GET | `/api/auth/me` | — (ต้องมี Bearer) | `{ id, email, name, role }` |
+
+- `user` = `{ id, email, name, role:("ADMIN"\|"FARM_OWNER") }`
+- access token อายุ `ACCESS_TOKEN_TTL` (default 15m), refresh `REFRESH_TOKEN_TTL` (default 30d)
+- frontend เก็บ token ใน localStorage + axios interceptor refresh อัตโนมัติเมื่อ 401 (ดู `lib/api.ts`)
+
+### OAuth — Google / LINE (ข้อ 1.2.3) — เปิดในเบราว์เซอร์ (redirect, ไม่ใช่ AJAX)
+| Method | Path | หมายเหตุ |
+|---|---|---|
+| GET | `/api/auth/oauth/:provider/start` | `provider` = `google` \| `line` → 302 เด้งไปหน้า consent ของ provider |
+| GET | `/api/auth/oauth/:provider/callback` | provider เด้งกลับมา → แลก token → 302 ไป `FRONTEND_URL/oauth/callback#accessToken=..&refreshToken=..` (error → `#error=..`) |
+
+- frontend แค่ `window.location = <apiBase>/auth/oauth/<provider>/start` แล้วรับ token ที่หน้า `/oauth/callback` (อ่านจาก URL hash)
+- **redirect URI ที่ต้องลงทะเบียนใน console:** `http://localhost:3000/api/auth/oauth/{google|line}/callback` (เปลี่ยน base ได้ด้วย env `OAUTH_CALLBACK_BASE`)
+- env: `GOOGLE_CLIENT_ID/SECRET`, `LINE_CHANNEL_ID/SECRET`; LINE ต้องขอสิทธิ์ Email permission ถึงจะได้ email (ไม่งั้นผูกด้วย email เทียม `line_<sub>@oauth.local`)
 
 ### รูปแบบ error (ทุก endpoint)
 ```json
 { "error": "ข้อความภาษาไทย", "details": { } }
 ```
 - `400` validation ไม่ผ่าน (zod) — `details` คือ field errors
-- `401` scheduler secret ผิด
+- `401` ไม่ได้ login / token หมดอายุ / scheduler secret ผิด
+- `403` ไม่มีสิทธิ์แก้ระบบของผู้อื่น (RBAC)
 - `404` ไม่พบ record
 - `500` error อื่น
 
@@ -38,7 +63,9 @@
 | PATCH | `/api/systems/:id` | แก้ (body partial) |
 | DELETE | `/api/systems/:id` | ลบ (cascade กล่อง/ถัง) |
 
-**Body (POST):** `{ name*, location?, waterVolumeL?, minLevelNote?, maxLevelNote?, status?(ACTIVE|INACTIVE), ownerId?, note? }`
+**Body (POST):** `{ name*, location?, waterVolumeL?, minLevelNote?, maxLevelNote?, status?(ACTIVE|INACTIVE), ownerId?, notifyEmail?, note? }`
+- `ownerId` ถ้าไม่ส่ง → ตั้งเป็น **ผู้สร้าง** (req.user) อัตโนมัติ; `notifyEmail` = อีเมลแจ้งเตือนเฉพาะระบบ (ข้อ 4)
+- response มี field `ownerId` + `notifyEmail` — frontend ใช้ `ownerId` เทียบกับ user ปัจจุบันเพื่อรู้ว่าแก้ได้ไหม
 
 ### CrabBox (nested + รายตัว)
 | Method | Path | หมายเหตุ |
@@ -71,8 +98,10 @@
 
 - `status`: `FATTENING` · `READY` · `SOLD` · `DEAD`
 - `type`: `MEAT` · `EGG` · `UNKNOWN`
-- **Body:** `{ systemId*, code?, boxId?, type?, sourceSellerId?, buyerId?, lockedForBuyerId?, purchasePrice?, purchaseDate?, weightG?, startFirmnessPct?(0-100), currentFirmnessPct?(0-100), readyAt?, sellPrice?, sellDate?, status?, round?, note? }`
-- **gotcha:** ผูกปูเข้ากล่อง (`boxId`) → backend sync `CrabBox.status` + กันปู 2 ตัว/กล่องให้อัตโนมัติ
+- **Body:** `{ systemId*, code?, boxId?, cableTieColor?, type?, sourceSellerId?, buyerId?, lockedForBuyerId?, purchasePrice?, purchaseDate?, weightG?, startFirmnessPct?(0-100), currentFirmnessPct?(0-100), readyAt?, sellPrice?, sellDate?, status?, round?, note? }`
+- `cableTieColor` = สีเคเบิ้ลไทล์รัดกล้าม (hex/ชื่อสี) — **1 กล่องใส่ปูได้หลายตัว** ใช้สีแยกว่าตัวไหนเป็นตัวไหน (ข้อ 2.2)
+- `currentFirmnessPct` = %ความแน่นเนื้อ (MEAT) หรือ **%ไข่ (EGG)** — frontend โชว์บนกล่อง (ข้อ 3)
+- **gotcha:** ผูกปูเข้ากล่อง (`boxId`) → backend sync `CrabBox.status` (มีปูเป็นๆ ≥1 = OCCUPIED); **ไม่กันจำนวนปูต่อกล่องแล้ว** (เดิมกัน 1 ตัว/กล่อง)
 
 ---
 

@@ -20,19 +20,68 @@ datasource db {
 //  ผู้ใช้ระบบ (เจ้าของฟาร์ม) — ปลายทางแจ้งเตือนดึงจากที่นี่ (dynamic ตาม user)
 // ─────────────────────────────────────────────────────────────────────
 
-/// ผู้ใช้ระบบ — ตอนนี้ single user แต่ออกแบบเผื่อ login/หลาย user ภายหลัง
+/// ผู้ใช้ระบบ — รองรับ multi-user + role (admin / เจ้าของฟาร์ม)
 model User {
   id            Int      @id @default(autoincrement())
-  email         String   @unique // Gmail ปลายทางการแจ้งเตือน
+  email         String   @unique // Gmail ปลายทางการแจ้งเตือน + ใช้ login
   name          String?
+  passwordHash  String? // bcrypt hash — null ได้ (กรณี login ผ่าน OAuth อย่างเดียว)
+  role          Role     @default(FARM_OWNER) // admin = ทำได้ทุกอย่าง, farm owner = แก้ได้แค่ของตัวเอง
   lineId        String? // เผื่อ Line ในอนาคต
   notifyByEmail Boolean  @default(true)
   active        Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  systems CrabSystem[] // ระบบปูที่ผู้ใช้นี้เป็นเจ้าของ
-  tasks   Task[] // งานที่ต้องแจ้งให้ผู้ใช้นี้
+  systems       CrabSystem[] // ระบบปูที่ผู้ใช้นี้เป็นเจ้าของ
+  tasks         Task[] // งานที่ต้องแจ้งให้ผู้ใช้นี้
+  refreshTokens RefreshToken[]
+  oauthAccounts OAuthAccount[] // บัญชี OAuth ที่ผูกไว้ (Google/Line)
+
+  // ── ข้อมูลที่ผูกเจ้าของตรงๆ (per-user isolation) ──
+  contacts      Contact[]
+  substances    Substance[]
+  inventoryItems InventoryItem[]
+  dosingRules   DosingRule[]
+  reminderRules ReminderRule[]
+  ledgerEntries LedgerEntry[]
+}
+
+/// บัญชี OAuth ที่ผูกกับ user (login with Google/Line — ไม่เก็บ password, ข้อ 1.2.3)
+model OAuthAccount {
+  id                Int           @id @default(autoincrement())
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId            Int
+  provider          OAuthProvider
+  providerAccountId String // sub/userId ที่ provider คืนมา
+  createdAt         DateTime      @default(now())
+
+  @@unique([provider, providerAccountId]) // 1 บัญชี provider ผูกได้ user เดียว
+  @@index([userId])
+}
+
+enum OAuthProvider {
+  GOOGLE
+  LINE
+}
+
+enum Role {
+  ADMIN // ทำได้ทุกอย่าง มองเห็นทุกเมนู
+  FARM_OWNER // เห็นทุกเมนู แต่แก้ไขได้แค่ระบบปูของตัวเอง (ของคนอื่น = read-only)
+}
+
+/// refresh token (เก็บเป็น hash เพื่อ revoke ได้) — รองรับ flow access+refresh (ข้อ 1.2.4)
+model RefreshToken {
+  id        Int       @id @default(autoincrement())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  tokenHash String    @unique // sha256 ของ refresh token ดิบ (ไม่เก็บ token ตรงๆ)
+  expiresAt DateTime
+  revokedAt DateTime? // != null = ใช้ไม่ได้แล้ว (logout / rotate)
+  userAgent String?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -49,7 +98,8 @@ model CrabSystem {
   maxLevelNote String? // โน้ตระดับน้ำ MAX
   status       SystemStatus @default(ACTIVE)
   owner        User?        @relation(fields: [ownerId], references: [id])
-  ownerId      Int? // เจ้าของระบบ → ใช้ resolve ปลายทางแจ้งเตือน
+  ownerId      Int? // เจ้าของระบบ → ใช้ resolve ปลายทางแจ้งเตือน + สิทธิ์แก้ไข (RBAC)
+  notifyEmail  String? // อีเมลแจ้งเตือนเฉพาะระบบนี้ (ข้อ 4) — เว้นว่าง = ใช้เมลเจ้าของ
   note         String?      @db.Text
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
@@ -72,7 +122,7 @@ enum SystemStatus {
   INACTIVE
 }
 
-/// กล่องปู (1 กล่อง = ปูได้ 1 ตัว)
+/// กล่องปู (1 กล่อง = ปูได้หลายตัว — รัดกล้ามด้วยเคเบิ้ลไทล์สีต่างกันแยกตัว, ข้อ 2)
 model CrabBox {
   id        Int        @id @default(autoincrement())
   system    CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
@@ -119,6 +169,8 @@ model Crab {
   systemId Int
   box      CrabBox?   @relation(fields: [boxId], references: [id])
   boxId    Int?
+  // เคเบิ้ลไทล์รัดกล้ามแยกตัว — 1 กล่องมีปูได้หลายตัว ใช้สีแยกว่าตัวไหนเป็นตัวไหน (ข้อ 2.2)
+  cableTieColor String? // hex หรือชื่อสี เช่น "#e53935" / "red"
   type     CrabType   @default(UNKNOWN) // ขุนเนื้อ หรือ ขุนไข่
 
   // ที่มา / ปลายทาง
@@ -244,7 +296,9 @@ enum WaterParam {
 /// คลังสาร (master list) — แร่ธาตุ/สาร/จุลินทรีย์ เพิ่มตัวใหม่ได้เองโดยไม่ต้องแก้โค้ด (ข้อ 2.1-2.3)
 model Substance {
   id              Int               @id @default(autoincrement())
-  name            String            @unique // เช่น "เบกกิ้งโซดา", "จุลินทรีย์สังเคราะห์แสง"
+  owner           User?             @relation(fields: [ownerId], references: [id])
+  ownerId         Int? // เจ้าของคลังสาร (per-user) — แยกรายการสารต่อ user
+  name            String // เช่น "เบกกิ้งโซดา", "จุลินทรีย์สังเคราะห์แสง"
   category        SubstanceCategory
   unit            String // ช้อนชา / ช้อนแกง / กรัม / มล.
   needsPrep       Boolean           @default(false) // ต้องเพาะเลี้ยงก่อนใช้ (2.3)
@@ -260,6 +314,9 @@ model Substance {
   dosingRecords DosingRecord[]
   preps         SubstancePrep[]
   inventory     InventoryItem?
+
+  @@unique([ownerId, name]) // ชื่อสารไม่ซ้ำ "ต่อ user" (ข้าม user ซ้ำได้)
+  @@index([ownerId])
 }
 
 enum SubstanceCategory {
@@ -274,8 +331,10 @@ enum SubstanceCategory {
 /// ถ้าไม่มี calibration ที่ตรง → ใช้ fixedDose (จำนวน fix เช่น biodigest) ถ้ามี
 model DosingRule {
   id          Int              @id @default(autoincrement())
+  owner       User?            @relation(fields: [ownerId], references: [id])
+  ownerId     Int? // เจ้าของกฎ (per-user) — กฎกลาง (systemId=null) ก็ผูกเจ้าของได้
   system      CrabSystem?      @relation(fields: [systemId], references: [id], onDelete: Cascade)
-  systemId    Int? // null = ใช้กับทุกระบบ
+  systemId    Int? // null = ใช้กับทุกระบบของเจ้าของ
   parameter   WaterParam // ค่าน้ำที่เป็นตัวจุด
   condition   RuleCondition // ต่ำกว่า min หรือ สูงกว่า max
   actionType  DosingActionType // เติมสาร / ให้วัดค่าต่อ / แค่หมายเหตุ
@@ -286,6 +345,8 @@ model DosingRule {
   active      Boolean          @default(true)
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
+
+  @@index([ownerId])
 }
 
 /// Calibration ต่อระบบ — "สาร X 1 หน่วย → พารามิเตอร์ Y เปลี่ยน +Z" (ดู memory: dosing-calibration-model)
@@ -365,6 +426,8 @@ enum PrepStatus {
 /// กฎการแจ้งเตือน — กำหนดว่า "อะไร / เมื่อไร / ตามจิกทุกกี่นาที"
 model ReminderRule {
   id               Int           @id @default(autoincrement())
+  owner            User?         @relation(fields: [ownerId], references: [id])
+  ownerId          Int? // เจ้าของกฎ (per-user) — กฎกลาง (systemId=null) ก็ผูกเจ้าของได้
   system           CrabSystem?   @relation(fields: [systemId], references: [id], onDelete: Cascade)
   systemId         Int?
   type             ReminderType
@@ -384,6 +447,8 @@ model ReminderRule {
   updatedAt        DateTime      @updatedAt
 
   tasks Task[]
+
+  @@index([ownerId])
 }
 
 enum ReminderType {
@@ -493,6 +558,8 @@ enum NotifStatus {
 /// ผู้ซื้อ/ผู้ขาย (เจ้าเดียวเป็นได้ทั้งคู่)
 model Contact {
   id        Int         @id @default(autoincrement())
+  owner     User?       @relation(fields: [ownerId], references: [id])
+  ownerId   Int? // เจ้าของคู่ค้า (per-user)
   name      String
   type      ContactType
   phone     String?
@@ -508,6 +575,8 @@ model Contact {
   soldToUs     Crab[]        @relation("CrabSeller") // ปูที่เราซื้อจากเจ้านี้
   boughtFromUs Crab[]        @relation("CrabBuyer") // ปูที่เจ้านี้ซื้อจากเรา
   lockedCrabs  Crab[]        @relation("CrabLocked")
+
+  @@index([ownerId])
 }
 
 enum ContactType {
@@ -582,6 +651,8 @@ enum OutreachStatus {
 /// รายการเงินเข้า-ออกทุกประเภท (ซื้อปู/ขายปู/อาหาร/สาร/อุปกรณ์) รวมไว้ที่เดียว แทน Excel ที่กระจัดกระจาย
 model LedgerEntry {
   id            Int          @id @default(autoincrement())
+  owner         User?        @relation(fields: [ownerId], references: [id])
+  ownerId       Int? // เจ้าของรายการบัญชี (per-user)
   system        CrabSystem?  @relation(fields: [systemId], references: [id])
   systemId      Int?
   kind          LedgerKind // เข้า/ออก
@@ -592,6 +663,8 @@ model LedgerEntry {
   transactionId Int?         @unique
   note          String?      @db.Text
   createdAt     DateTime     @default(now())
+
+  @@index([ownerId])
 }
 
 enum LedgerKind {
@@ -605,6 +678,8 @@ enum LedgerKind {
 
 model InventoryItem {
   id           Int               @id @default(autoincrement())
+  owner        User?             @relation(fields: [ownerId], references: [id])
+  ownerId      Int? // เจ้าของคลังของ (per-user)
   name         String
   category     InventoryCategory
   substance    Substance?        @relation(fields: [substanceId], references: [id])
@@ -615,6 +690,8 @@ model InventoryItem {
   note         String?
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
+
+  @@index([ownerId])
 }
 
 enum InventoryCategory {

@@ -2,28 +2,23 @@ import { prisma } from './prisma';
 import { env } from '../config/env';
 import { sendNotificationEmail } from './mailer';
 
-// ── ปลายทางแจ้งเตือนของ Task หนึ่ง: user → เจ้าของระบบ → MAIL_TO ───────
+// ── ปลายทางแจ้งเตือน: notifyEmail ของระบบ → user → เจ้าของระบบ → MAIL_TO ─
+// (ข้อ 4) ถ้าระบบตั้ง notifyEmail ไว้ ให้ส่งไปที่นั่นก่อนเสมอ
 type RecipientInfo = {
   user?: { email: string; notifyByEmail: boolean } | null;
-  system?: { owner?: { email: string; notifyByEmail: boolean } | null } | null;
+  system?: {
+    notifyEmail?: string | null;
+    owner?: { email: string; notifyByEmail: boolean } | null;
+  } | null;
 };
-function resolveRecipient(t: RecipientInfo, fallback?: string | null): string | null {
+// ปลายทาง = อีเมลเฉพาะระบบ → user เจ้าของงาน → เจ้าของระบบ → MAIL_TO (env)
+// หมายเหตุ multi-user: เลิกใช้ fallback "user active คนแรก" เพราะจะส่งผิดคน —
+// งานทุกใบมี userId (เจ้าของงาน) แล้ว ถ้า resolve ไม่ได้จริงๆ ใช้ MAIL_TO กลางเท่านั้น
+function resolveRecipient(t: RecipientInfo): string | null {
+  const systemEmail = t.system?.notifyEmail || null; // ข้อ 4 — ลำดับสูงสุด
   const userEmail = t.user?.notifyByEmail === false ? null : t.user?.email;
   const ownerEmail = t.system?.owner?.notifyByEmail === false ? null : t.system?.owner?.email;
-  return userEmail ?? ownerEmail ?? fallback ?? env.MAIL_TO ?? null;
-}
-
-/**
- * ปลายทางสำรองสุดท้าย — อีเมลของ user คนแรกที่ active (single user)
- * ใช้กับงานเดิมที่ระบบยังไม่มี owner (userId/owner เป็น null) เพื่อไม่ให้ digest ข้ามงานแบบเงียบ
- */
-async function fallbackRecipient(): Promise<string | null> {
-  const owner = await prisma.user.findFirst({
-    where: { active: true, notifyByEmail: true },
-    orderBy: { id: 'asc' },
-    select: { email: true },
-  });
-  return owner?.email ?? env.MAIL_TO ?? null;
+  return systemEmail ?? userEmail ?? ownerEmail ?? env.MAIL_TO ?? null;
 }
 
 /**
@@ -36,12 +31,12 @@ export async function notifyTask(taskId: number): Promise<boolean> {
     where: { id: taskId },
     include: {
       user: { select: { email: true, notifyByEmail: true } },
-      system: { select: { name: true, owner: { select: { email: true, notifyByEmail: true } } } },
+      system: { select: { name: true, notifyEmail: true, owner: { select: { email: true, notifyByEmail: true } } } },
     },
   });
   if (!task) return false;
 
-  const to = resolveRecipient(task, await fallbackRecipient());
+  const to = resolveRecipient(task);
 
   const nth = task.notifyCount + 1;
   const subject = `🦀 ${nth > 1 ? `[เตือนซ้ำครั้งที่ ${nth}] ` : ''}${task.title}`;
@@ -120,18 +115,16 @@ export async function notifyPendingDigest(now = new Date()): Promise<DigestResul
     orderBy: { dueAt: 'asc' },
     include: {
       user: { select: { email: true, notifyByEmail: true } },
-      system: { select: { name: true, owner: { select: { email: true, notifyByEmail: true } } } },
+      system: { select: { name: true, notifyEmail: true, owner: { select: { email: true, notifyByEmail: true } } } },
     },
   });
 
   if (tasks.length === 0) return { pending: 0, recipients: 0, throttled: 0, sent: false };
 
-  const fallback = await fallbackRecipient();
-
-  // จัดกลุ่มงานตามปลายทาง (เผื่อหลายระบบ/หลาย user) — ปกติ single user = กลุ่มเดียว
+  // จัดกลุ่มงานตามปลายทาง (แต่ละ user แยกกลุ่มกันเองตาม userId ของงาน)
   const groups = new Map<string, typeof tasks>();
   for (const t of tasks) {
-    const to = resolveRecipient(t, fallback);
+    const to = resolveRecipient(t);
     if (!to) continue;
     const list = groups.get(to) ?? [];
     list.push(t);

@@ -4,7 +4,52 @@
 > อัปเดตทุกครั้งที่มี decision สำคัญ / สร้าง module ใหม่ / เปลี่ยน schema
 
 ## 👉 ทำต่อจากตรงนี้ (NEXT — session ใหม่อ่านตรงนี้ก่อน)
-**Phase 1–7 เสร็จแล้ว** — typecheck ผ่าน; **ไม่ต้อง migrate** (model F `LedgerEntry` มีตั้งแต่ schema init แล้ว เหมือน Phase 4/5)
+### 🔐 การปรับระบบครั้งใหญ่ (Auth/Role/OAuth + Multi-crab + UI) — แบ่ง 4 เฟส
+แผนเต็ม: `C:\Users\piyawat\.claude\plans\adaptive-wobbling-umbrella.md`
+
+**Phase 1 (Auth + RBAC + read-only ข้ามเจ้าของ + โชว์ค่าน้ำ) เสร็จ + ทดสอบ server จริงผ่าน** ✅
+- **migration `phase8_auth` apply ลง DB จริงแล้ว:** `User.passwordHash/role(Role ADMIN|FARM_OWNER)`, model `RefreshToken` (เก็บ sha256 hash, rotate+revoke), `CrabSystem.notifyEmail` (เตรียมไว้ Phase 4)
+- **deps ใหม่:** `jsonwebtoken`, `bcryptjs` (+types). **env ใหม่ (required):** `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`; optional: `ACCESS_TOKEN_TTL`(15m), `REFRESH_TOKEN_TTL`(30d), `FRONTEND_URL`, `GOOGLE_*`/`LINE_*`/`OAUTH_CALLBACK_BASE` (Phase 2) — เพิ่มใน `.env`+`.env.example` แล้ว
+- ไฟล์ backend ใหม่: `services/auth.service.ts` (register/login/refresh/logout/me + issueTokens), `middleware/auth.ts` (`requireAuth`/`requireAdmin`/`assertCanEditSystem` + resolver `systemIdFrom*` + `requireSystemEdit()` + `requireDosingRuleEdit`), `routes/auth.ts`
+- **`routes/index.ts`:** mount `/auth` + `/scheduler` แบบ public/secret ก่อน แล้ว `api.use(requireAuth)` ครอบที่เหลือทั้งหมด
+- **ownership ติดที่ write route ของ:** systems(PATCH/DELETE/boxes/tanks), boxes/filter-tanks(:id), crabs(POST/PATCH/DELETE), water(tests/targets), dosing(calibrations/system-rules/rule:id). **substances/contacts/transactions/reminders/inventory/ledger = authed-only** (shared data — ยังไม่ผูกเจ้าของ, follow-up ถ้าต้องการเข้มกว่านี้)
+- `system.service.createSystem` ตั้ง `ownerId = ผู้สร้าง`; `seed.ts` ตั้ง user เจ้าของเป็น `role ADMIN` + ตั้งรหัสผ่านเริ่มต้นผ่าน env `SEED_ADMIN_PASSWORD` (ถ้าใส่)
+- **frontend:** `lib/token.ts` (localStorage), `lib/api.ts` (interceptor แนบ Bearer + refresh single-flight เมื่อ 401 → fail = เด้ง login), `stores/auth.ts` (`canEditSystem`/`isAdmin`), `views/Login|Register|OAuthCallback.vue`, router guard (`meta.public`), `App.vue` (shell เฉพาะตอน login + เมนู user/logout), `CrabsView` read-only chip + ปุ่มแก้ซ่อนเมื่อ `!canEdit` + **banner ค่าน้ำล่าสุด** (ไฮไลต์ค่าหลุดเกณฑ์ ข้อ 1.2.2)
+- **ทดสอบผ่าน:** register→FARM_OWNER, สร้างระบบ→ownerId=ผู้สร้าง, B GET ระบบ A=200 / B PATCH=403 / A PATCH=200, refresh rotate + reuse เก่า=401, ไม่มี token=401
+- ⚠️ **เจ้าของจริง (jame.piyawat111) ยังไม่มีรหัสผ่าน** → ต้องรัน `SEED_ADMIN_PASSWORD=xxx npm run prisma:seed` ครั้งเดียวเพื่อตั้งรหัส (ยังไม่มีหน้าเปลี่ยนรหัสผ่าน — follow-up)
+
+**Phase 3 (1 กล่องใส่ปูหลายตัว + เคเบิ้ลไทล์สี) เสร็จ + ทดสอบผ่าน** ✅
+- **migration `phase10_multicrab`:** `Crab.cableTieColor String?` (สีแยกตัว ข้อ 2.2)
+- backend: `crab.service` ลบเงื่อนไขกันปูตัวที่ 2 → `assertBoxInSystem` (เช็คแค่กล่องอยู่ระบบเดียวกัน); route รับ `cableTieColor`
+- **ขายยกล็อต + คำนวณน้ำหนักอัตโนมัติ ไม่กระทบ** (ทำงานระดับ crabId/น้ำหนักรายตัว — ตอบข้อ 2.1) ✅
+- frontend `CrabsView`: `crabInBox`→`crabsInBox` (filter), box-cell โชว์ปูหลายตัว (จุดสี+ขีด+เนื้อ/ไข่%), คลิกกล่องหลายตัว→ chooser dialog, ฟอร์มปูเพิ่ม swatch สีเคเบิ้ลไทล์, รับล็อตเลือกกล่องที่มีปูแล้วได้ (เอา OCCUPIED guard ออก)
+- ทดสอบ: ใส่ปู 3 ตัวสีต่างกันในกล่องเดียว → list คืน 3 ตัว ✅
+
+**Phase 4 (%ไข่บนกล่อง + เมลแจ้งเตือนต่อระบบ) เสร็จ + ทดสอบผ่าน** ✅
+- backend `lib/notify.ts`: `resolveRecipient` ลำดับใหม่ = **`system.notifyEmail`** → user → owner → fallback/MAIL_TO (เพิ่ม `notifyEmail` ใน select ทั้ง `notifyTask`+`notifyPendingDigest`); `routes/systems.ts` validate `notifyEmail` (email/nullable)
+- frontend: box-cell โชว์ `currentFirmnessPct` เป็น "ไข่ NN%"/"เนื้อ NN%" ต่อตัว (ข้อ 3, ใช้ field เดิม), dialog สร้างระบบ + ปุ่ม ⚙️ ตั้งค่าระบบ (แก้ชื่อ+notifyEmail) → `systemApi.update`
+- ทดสอบ: สร้างระบบ `notifyEmail=box-alert@...` → ค่าถูกบันทึก + resolve ชนะ owner email ✅
+
+**Phase 2 (OAuth Google + LINE) เสร็จ + ทดสอบ authorize flow ผ่าน** ✅ (เหลือ user คลิกจริงในเบราว์เซอร์)
+- **migration `phase9_oauth`:** model `OAuthAccount` (`@@unique [provider, providerAccountId]`) + enum `OAuthProvider {GOOGLE,LINE}`; `User.oauthAccounts`
+- **`services/oauth.service.ts`** (ใหม่, ไม่เพิ่ม dep — ใช้ global `fetch`): `getAuthorizeUrl(provider)` + `handleCallback(provider,code,state)`; authorization-code flow เขียนเอง
+  - **Google:** token `oauth2.googleapis.com/token` → profile `googleapis.com/oauth2/v2/userinfo` (มี email เสมอ)
+  - **LINE:** token `api.line.me/oauth2/v2.1/token` → decode `id_token` (JWT HS256 ด้วย channel secret, verify audience=channelId/issuer) เอา `sub`/`email`/`name`; ถ้า id_token verify ไม่ได้ → fallback `api.line.me/v2/profile` (ไม่มี email)
+  - **state = JWT อายุ 10 นาที** (CSRF, stateless); **callback base** = env `OAUTH_CALLBACK_BASE` ?? `http://localhost:3000/api/auth/oauth`
+  - **match user:** OAuthAccount เดิม → user เดิม; ไม่งั้นหา user ด้วย email (ผูกเข้าบัญชีเดิม) ไม่งั้นสร้างใหม่ (FARM_OWNER, passwordHash=null); LINE ไม่มี email → email เทียม `line_<sub>@oauth.local`
+- **route** `routes/auth.ts`: `GET /api/auth/oauth/:provider/start` (เด้งไป consent), `GET /api/auth/oauth/:provider/callback` (แลก token → redirect `FRONTEND_URL/oauth/callback#accessToken=..&refreshToken=..`; error → `#error=..`)
+- **frontend:** ปุ่ม Google/LINE ใน `LoginView` เปิดใช้งานแล้ว (เด้งไป `<apiBase>/auth/oauth/<provider>/start`); `OAuthCallbackView` อ่าน token จาก hash → เก็บ → `fetchMe` → เข้าหน้าแรก
+- **env ที่ใช้:** `GOOGLE_CLIENT_ID/SECRET`, `LINE_CHANNEL_ID/SECRET` (user ใส่ครบแล้ว), `FRONTEND_URL`, `OAUTH_CALLBACK_BASE`(optional)
+- ⚠️ **ต้องลงทะเบียน redirect URI ให้ตรงเป๊ะ** ใน console:
+  - Google Cloud Console → Credentials → Authorized redirect URIs: `http://localhost:3000/api/auth/oauth/google/callback` (+ โดเมนจริงตอน deploy) + เพิ่มบัญชีตัวเองเป็น Test user ถ้า consent screen ยัง Testing
+  - LINE Login → Callback URL: `http://localhost:3000/api/auth/oauth/line/callback` + ขอสิทธิ์ Email permission ถึงจะได้ email (ไม่งั้นใช้ email เทียม)
+- ทดสอบ: `/auth/oauth/{google,line}/start` คืน authorize URL ถูกต้อง (client_id จริง, redirect_uri, scope, state JWT); provider มั่ว→400; callback ไม่มี code→redirect `#error=`
+
+**🎉 ครบทั้ง 4 เฟสของการปรับระบบครั้งใหญ่แล้ว** (Phase 1 Auth/RBAC, Phase 2 OAuth, Phase 3 multi-crab, Phase 4 egg%/notify email) — เหลือ user ทดสอบ login จริงในเบราว์เซอร์ + ตั้งรหัสผ่าน admin
+
+---
+
+**Phase 1–7 (เดิม) เสร็จแล้ว** — typecheck ผ่าน; **ไม่ต้อง migrate** (model F `LedgerEntry` มีตั้งแต่ schema init แล้ว เหมือน Phase 4/5)
 
 **Backend ครบทุก phase แล้ว → งานถัดไปคือ Frontend (Vue.js, แยก repo)**
 - 📄 **[API.md](./API.md) = สัญญา API ครบทุก endpoint** (สำหรับ frontend อ่านแทนการไล่อ่าน route) — อัปเดตทุกครั้งที่แก้ route
@@ -198,6 +243,20 @@ prisma/schema.prisma
 > ค่าตัวเลขจริง (min/max, ปริมาณสาร, รอบวัน) ให้ถามผู้ใช้ตอนทำ seed เพราะผู้ใช้ custom เอง
 
 ## Log การเปลี่ยนแปลง
+- **2026-06-22** — **แยกข้อมูลขาดต่อ user ทุกโมดูล (per-user isolation)** แผน `velvety-plotting-shannon.md`:
+  - เปลี่ยนโมเดลสิทธิ์จาก "shared read, owned write" → **เห็น/แก้ได้เฉพาะของตัวเอง**; **ADMIN = god mode** (เห็น/แก้ทุกคน)
+  - **migration `phase11_user_isolation`** (apply + backfill ลง DB จริงแล้ว): เพิ่ม `ownerId Int?` (FK User) ใน `Contact`/`Substance`/`InventoryItem`/`DosingRule`/`ReminderRule`/`LedgerEntry` + `@@index([ownerId])`; **`Substance` unique เปลี่ยน `name` → `[ownerId, name]`** (คลังสารแยกต่อ user); backfill ข้อมูลเดิมทั้งหมดยกให้ jame (id 1)
+  - **helper ใหม่ `lib/scope.ts`**: `ownedSystemIds`/`systemScopeWhere` (กลุ่ม system-scoped), `ownerWhere`/`assertOwnership`/`isAdmin` (กลุ่มมี ownerId ตรงๆ)
+  - ทุก service: list/get/create/update/delete รับ `user: AuthUser` แล้วกรอง/assert เจ้าของ — กลุ่ม 1 (box/tank/crab/water/calibration) กรองผ่าน `systemId∈ownedSystems`; กลุ่ม 2 กรอง `ownerId`; `Transaction`/`OutreachLog` ผ่าน `contact.ownerId`; `Task` ผ่าน `userId`; dashboard scope ครบ
+  - **central rules (systemId=null)** ของ `DosingRule`/`ReminderRule` ผูก `ownerId` → `evaluateWaterValues`/`fireEvent`/`listRules` ใช้เฉพาะของเจ้าของระบบ; แก้ `requireDosingRuleEdit` ให้เช็ค ownerId ของกฎกลาง
+  - **multi-user notify**: `createTaskFromRule` ส่ง `userId=rule.ownerId`; restock task ใช้ `item.ownerId`; **เลิก fallback "user active คนแรก"** ใน `notify.ts` (เหลือ `MAIL_TO`); seed ผูก ownerId=jame ให้ substance/contact/reminder
+  - เพิ่ม guard `requireSystemEdit` ที่ `POST /systems/:id/fire-event`
+  - ✅ typecheck ผ่าน; ทดสอบจริง: ADMIN jame เห็นทั้งหมด (7 ระบบ/80 ปู/...), LINE user (FARM_OWNER id 5) เห็น **0 ทุกอย่าง** (เริ่มสะอาด); server boot + /api/health ผ่าน
+- **2026-06-21** — เริ่ม "ปรับระบบครั้งใหญ่" (แผน `adaptive-wobbling-umbrella.md`):
+  - **Phase 1 (Auth+RBAC):** migration `phase8_auth` (User.passwordHash/role, RefreshToken, CrabSystem.notifyEmail); JWT access+refresh (rotate/revoke), `requireAuth`+ownership ทุก write route ของ ปู/ระบบ/น้ำ/ปรุงน้ำ; FE auth store+interceptor+guard+read-only UI+banner ค่าน้ำ; ทดสอบ server ผ่าน (403/401/refresh rotation). ⚠️ owner จริงต้องรัน `SEED_ADMIN_PASSWORD=xxx npm run prisma:seed` ตั้งรหัสครั้งเดียว
+  - **Phase 3 (multi-crab):** migration `phase10_multicrab` (Crab.cableTieColor); ลบ box-occupancy guard → 1 กล่องหลายตัว; FE box-cell โชว์ปูหลายตัว (จุดสี+ขีด+%) + chooser + swatch สี; ขายยกล็อต/คำนวณน้ำหนักไม่กระทบ (crab-level)
+  - **Phase 4 (UI+notify):** `resolveRecipient` ใช้ `system.notifyEmail` ก่อน; FE โชว์ "ไข่ NN%"/"เนื้อ NN%" บนกล่อง + ปุ่ม ⚙️ ตั้งค่าระบบ; typecheck ผ่านทั้ง BE+FE, ทดสอบ server ผ่าน
+  - **Phase 2 (OAuth Google+LINE):** migration `phase9_oauth` (OAuthAccount); `oauth.service` authorization-code flow เขียนเอง (global fetch, ไม่เพิ่ม dep); route `/auth/oauth/:provider/start|callback`; FE เปิดปุ่ม Google/LINE; ทดสอบ authorize URL ผ่าน (เหลือคลิกจริง) → **ครบ 4 เฟส**
 - **2026-06-19** — แก้บั๊กแจ้งเตือนตามฟีดแบ็ค (4 ข้อ):
   1. **(ข้อ 1) เวลาแจ้งเตือน** — กฎ INTERVAL_DAYS/MONTHS ที่ไม่ใส่ `timeOfDay` เดิม `dueAt` อิงเวลาตอนสร้างกฎ → fix `computeNextRunAt` default `'08:00'` (`DEFAULT_TIME_OF_DAY`); + ตั้ง `process.env.TZ='Asia/Bangkok'` ใน `config/env.ts` (host เป็น UTC ทำให้ cron `0 20 * * *` + setHours เพี้ยน 7 ชม.) — ผู้ใช้ยังเลือกเวลาเองได้ผ่าน `timeOfDay`
   2. **(ข้อ 2) digest เตือนแค่ 2 รายการ** — root cause: ระบบ id 2/3 (สร้างผ่านหน้าเว็บ) `ownerId=null` → Task (systemId set, userId=null) resolve ปลายทางอีเมลไม่ได้ → `notifyPendingDigest` ทำ `if(!to) continue` ข้ามเงียบ (RESTOCK รอด เพราะตั้ง userId ตรงๆ). Fix: `createTask` fallback userId→user active คนแรก; `createSystem` default ownerId→user active คนแรก; `notify.ts` เพิ่ม `fallbackRecipient()` ส่งให้ `resolveRecipient`; **backfill DB จริง**: set ownerId ให้ 2 ระบบ + userId ให้ 5 task ค้าง

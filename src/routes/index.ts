@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import healthRoutes from './health';
+import authRoutes from './auth';
+import { requireAuth } from '../middleware/auth';
 import { systemRouter, boxRouter, filterTankRouter } from './systems';
 import crabRoutes from './crabs';
 import { waterSystemRouter, waterTestRouter } from './water';
@@ -11,7 +13,13 @@ import inventoryRoutes from './inventory';
 
 const api = Router();
 
+// ── public / secret-protected (ไม่ต้อง login) ────────────────────────
 api.use(healthRoutes);
+api.use('/auth', authRoutes); // register/login/refresh — public; /me มี requireAuth ในตัว
+api.use('/scheduler', schedulerRouter); // ป้องกันด้วย x-scheduler-secret (Plesk cron) — ไม่ใช้ JWT
+
+// ── ทุก endpoint ใต้จากนี้ต้อง login ──────────────────────────────────
+api.use(requireAuth);
 
 // A. ฮาร์ดแวร์
 api.use('/systems', systemRouter);
@@ -26,8 +34,7 @@ api.use('/water-tests', waterTestRouter);
 api.use('/substances', substanceRouter);
 api.use('/dosing-calibrations', calibrationRouter);
 api.use('/dosing-rules', ruleRouter);
-// D. Reminder engine (scheduler tick + กฎ + งาน + event chain)
-api.use('/scheduler', schedulerRouter);
+// D. Reminder engine (กฎ + งาน + event chain) — tick อยู่ใน schedulerRouter ด้านบน
 api.use('/reminder-rules', reminderRuleRouter);
 api.use('/tasks', taskRouter);
 api.use('/systems', systemEventRouter);

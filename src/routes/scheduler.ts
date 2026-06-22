@@ -9,6 +9,7 @@ import { tick } from '../services/scheduler.service';
 import { notifyTask } from '../lib/notify';
 import * as reminders from '../services/reminder.service';
 import * as tasks from '../services/task.service';
+import { requireSystemEdit, systemIdFromParam } from '../middleware/auth';
 
 // ════════════════════════════════════════════════════════════════════
 //  โมดูล D — Scheduler tick / ReminderRule / Task
@@ -77,7 +78,7 @@ reminderRuleRouter.get(
   validate({ query: z.object({ systemId: z.coerce.number().int().positive().optional() }) }),
   asyncHandler(async (req, res) => {
     const systemId = req.query.systemId ? Number(req.query.systemId) : undefined;
-    res.json(serialize(await reminders.listReminderRules(systemId)));
+    res.json(serialize(await reminders.listReminderRules(req.user!, systemId)));
   }),
 );
 
@@ -85,7 +86,7 @@ reminderRuleRouter.post(
   '/',
   validate({ body: reminderRuleBody }),
   asyncHandler(async (req, res) => {
-    res.status(201).json(serialize(await reminders.createReminderRule(req.body)));
+    res.status(201).json(serialize(await reminders.createReminderRule(req.user!, req.body)));
   }),
 );
 
@@ -93,7 +94,7 @@ reminderRuleRouter.get(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await reminders.getReminderRule(Number(req.params.id))));
+    res.json(serialize(await reminders.getReminderRule(Number(req.params.id), req.user!)));
   }),
 );
 
@@ -101,7 +102,7 @@ reminderRuleRouter.patch(
   '/:id',
   validate({ params: idParam, body: reminderRuleBody.partial() }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await reminders.updateReminderRule(Number(req.params.id), req.body)));
+    res.json(serialize(await reminders.updateReminderRule(Number(req.params.id), req.user!, req.body)));
   }),
 );
 
@@ -109,7 +110,7 @@ reminderRuleRouter.delete(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    await reminders.deleteReminderRule(Number(req.params.id));
+    await reminders.deleteReminderRule(Number(req.params.id), req.user!);
     res.status(204).end();
   }),
 );
@@ -129,7 +130,7 @@ taskRouter.get(
   asyncHandler(async (req, res) => {
     res.json(
       serialize(
-        await tasks.listTasks({
+        await tasks.listTasks(req.user!, {
           systemId: req.query.systemId ? Number(req.query.systemId) : undefined,
           status: req.query.status as z.infer<typeof taskStatus> | undefined,
           type: req.query.type as z.infer<typeof reminderType> | undefined,
@@ -143,7 +144,7 @@ taskRouter.get(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await tasks.getTask(Number(req.params.id))));
+    res.json(serialize(await tasks.getTask(Number(req.params.id), req.user!)));
   }),
 );
 
@@ -152,7 +153,7 @@ taskRouter.patch(
   '/:id',
   validate({ params: idParam, body: z.object({ status: taskStatus }) }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await tasks.updateTaskStatus(Number(req.params.id), req.body.status)));
+    res.json(serialize(await tasks.updateTaskStatus(Number(req.params.id), req.user!, req.body.status)));
   }),
 );
 
@@ -162,15 +163,16 @@ taskRouter.post(
   '/:id/complete',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await tasks.completeTaskManually(Number(req.params.id))));
+    res.json(serialize(await tasks.completeTaskManually(Number(req.params.id), req.user!)));
   }),
 );
 
-// บังคับส่งแจ้งเตือนทันที (debug / ทดสอบเมล)
+// บังคับส่งแจ้งเตือนทันที (debug / ทดสอบเมล) — เฉพาะงานของตัวเอง
 taskRouter.post(
   '/:id/notify',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
+    await tasks.getTask(Number(req.params.id), req.user!); // assert เจ้าของก่อนสั่งส่งเมล
     const ok = await notifyTask(Number(req.params.id));
     res.json({ sent: ok });
   }),
@@ -182,6 +184,7 @@ export const systemEventRouter = Router();
 systemEventRouter.post(
   '/:id/fire-event',
   validate({ params: idParam, body: z.object({ event: triggerEvent }) }),
+  requireSystemEdit(systemIdFromParam()),
   asyncHandler(async (req, res) => {
     const created = await reminders.fireEvent(req.body.event, Number(req.params.id));
     res.status(201).json({ event: req.body.event, tasksCreated: created });

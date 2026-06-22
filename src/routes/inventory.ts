@@ -35,7 +35,7 @@ router.get(
   validate({ query: listQuery }),
   asyncHandler(async (req, res) => {
     const { category: cat, lowOnly } = req.query as z.infer<typeof listQuery>;
-    res.json(serialize(await svc.listInventory({ category: cat, lowOnly })));
+    res.json(serialize(await svc.listInventory(req.user!, { category: cat, lowOnly })));
   }),
 );
 
@@ -43,7 +43,7 @@ router.post(
   '/',
   validate({ body }),
   asyncHandler(async (req, res) => {
-    res.status(201).json(serialize(await svc.createInventory(req.body)));
+    res.status(201).json(serialize(await svc.createInventory(req.user!, req.body)));
   }),
 );
 
@@ -51,7 +51,7 @@ router.get(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await svc.getInventory(Number(req.params.id))));
+    res.json(serialize(await svc.getInventory(Number(req.params.id), req.user!)));
   }),
 );
 
@@ -59,7 +59,7 @@ router.patch(
   '/:id',
   validate({ params: idParam, body: body.partial() }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await svc.updateInventory(Number(req.params.id), req.body)));
+    res.json(serialize(await svc.updateInventory(Number(req.params.id), req.user!, req.body)));
   }),
 );
 
@@ -68,7 +68,7 @@ router.post(
   '/:id/adjust',
   validate({ params: idParam, body: z.object({ delta: z.number() }) }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await svc.adjustInventory(Number(req.params.id), req.body.delta)));
+    res.json(serialize(await svc.adjustInventory(Number(req.params.id), req.user!, req.body.delta)));
   }),
 );
 
@@ -76,7 +76,7 @@ router.delete(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    await svc.deleteInventory(Number(req.params.id));
+    await svc.deleteInventory(Number(req.params.id), req.user!);
     res.status(204).end();
   }),
 );

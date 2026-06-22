@@ -2,6 +2,24 @@ import { Prisma, TxnKind, TxnStatus } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { notFound } from '../lib/http';
 import { syncLedgerForTransaction, removeLedgerForTransaction } from './ledger.service';
+import type { AuthUser } from './auth.service';
+import { isAdmin, assertOwnership } from '../lib/scope';
+
+// ── ownership helpers ─────────────────────────────────────────────────
+async function assertContactOwned(contactId: number, user: AuthUser) {
+  const c = await prisma.contact.findUnique({ where: { id: contactId }, select: { ownerId: true } });
+  if (!c) throw notFound('ไม่พบคู่ค้ารายนี้');
+  assertOwnership(user, c.ownerId);
+}
+
+async function assertCrabOwned(crabId: number, user: AuthUser) {
+  const crab = await prisma.crab.findUnique({
+    where: { id: crabId },
+    select: { system: { select: { ownerId: true } } },
+  });
+  if (!crab) throw notFound('ไม่พบปูที่ระบุ');
+  assertOwnership(user, crab.system.ownerId);
+}
 
 // ── โมดูล E: Transaction = การซื้อ/ขาย ────────────────────────────────
 //
@@ -61,7 +79,8 @@ async function computeFinancials(input: TxnFinancialInput): Promise<TxnFinancial
 }
 
 /** คำนวณกำไรล่วงหน้าโดยไม่บันทึก (ข้อ 4.5) */
-export function previewFinancials(input: TxnFinancialInput) {
+export async function previewFinancials(user: AuthUser, input: TxnFinancialInput) {
+  if (input.crabId != null) await assertCrabOwned(input.crabId, user); // กันดูต้นทุนปูของ user อื่น
   return computeFinancials(input);
 }
 
@@ -72,13 +91,14 @@ type TxnFilter = {
   crabId?: number;
 };
 
-export function listTransactions(filter: TxnFilter) {
+export function listTransactions(user: AuthUser, filter: TxnFilter) {
   return prisma.transaction.findMany({
     where: {
       contactId: filter.contactId,
       kind: filter.kind,
       status: filter.status,
       crabId: filter.crabId,
+      ...(isAdmin(user) ? {} : { contact: { ownerId: user.id } }), // เฉพาะธุรกรรมของคู่ค้าตัวเอง
     },
     orderBy: { id: 'desc' },
     include: {
@@ -88,15 +108,16 @@ export function listTransactions(filter: TxnFilter) {
   });
 }
 
-export async function getTransaction(id: number) {
+export async function getTransaction(id: number, user: AuthUser) {
   const txn = await prisma.transaction.findUnique({
     where: { id },
     include: {
-      contact: { select: { id: true, name: true, type: true } },
+      contact: { select: { id: true, name: true, type: true, ownerId: true } },
       crab: { select: { id: true, code: true, purchasePrice: true } },
     },
   });
   if (!txn) throw notFound('ไม่พบรายการซื้อขายนี้');
+  assertOwnership(user, txn.contact.ownerId);
   return txn;
 }
 
@@ -113,13 +134,9 @@ export type CreateTxnInput = {
   note?: string | null;
 };
 
-export async function createTransaction(input: CreateTxnInput) {
-  const contact = await prisma.contact.findUnique({ where: { id: input.contactId } });
-  if (!contact) throw notFound('ไม่พบคู่ค้ารายนี้');
-  if (input.crabId != null) {
-    const crab = await prisma.crab.findUnique({ where: { id: input.crabId } });
-    if (!crab) throw notFound('ไม่พบปูที่ระบุ');
-  }
+export async function createTransaction(user: AuthUser, input: CreateTxnInput) {
+  await assertContactOwned(input.contactId, user);
+  if (input.crabId != null) await assertCrabOwned(input.crabId, user);
 
   const qty = input.qty ?? 1;
   const fin = await computeFinancials({
@@ -153,14 +170,15 @@ export async function createTransaction(input: CreateTxnInput) {
 
 export type UpdateTxnInput = Partial<Omit<CreateTxnInput, 'contactId'>>;
 
-export async function updateTransaction(id: number, input: UpdateTxnInput) {
-  const current = await prisma.transaction.findUnique({ where: { id } });
+export async function updateTransaction(id: number, user: AuthUser, input: UpdateTxnInput) {
+  const current = await prisma.transaction.findUnique({
+    where: { id },
+    include: { contact: { select: { ownerId: true } } },
+  });
   if (!current) throw notFound('ไม่พบรายการซื้อขายนี้');
+  assertOwnership(user, current.contact.ownerId);
 
-  if (input.crabId != null) {
-    const crab = await prisma.crab.findUnique({ where: { id: input.crabId } });
-    if (!crab) throw notFound('ไม่พบปูที่ระบุ');
-  }
+  if (input.crabId != null) await assertCrabOwned(input.crabId, user);
 
   // ค่าที่ใช้คำนวณ — เอาจาก input ถ้าส่งมา ไม่งั้นใช้ของเดิม
   const kind = input.kind ?? current.kind;
@@ -193,9 +211,13 @@ export async function updateTransaction(id: number, input: UpdateTxnInput) {
   return txn;
 }
 
-export async function deleteTransaction(id: number) {
-  const txn = await prisma.transaction.findUnique({ where: { id } });
+export async function deleteTransaction(id: number, user: AuthUser) {
+  const txn = await prisma.transaction.findUnique({
+    where: { id },
+    include: { contact: { select: { ownerId: true } } },
+  });
   if (!txn) throw notFound('ไม่พบรายการซื้อขายนี้');
+  assertOwnership(user, txn.contact.ownerId);
   // ลบ LedgerEntry ที่ผูกไว้ก่อน กัน orphan (FK เป็น optional → default SetNull)
   await removeLedgerForTransaction(id);
   await prisma.transaction.delete({ where: { id } });

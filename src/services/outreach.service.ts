@@ -1,6 +1,19 @@
 import { Prisma, TxnKind, OutreachStatus } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { notFound, badRequest } from '../lib/http';
+import type { AuthUser } from './auth.service';
+import { isAdmin, assertOwnership } from '../lib/scope';
+
+/** assert ว่า outreach log นี้อยู่กับคู่ค้าของ user (ADMIN ผ่าน) */
+async function assertOutreachOwned(id: number, user: AuthUser) {
+  const o = await prisma.outreachLog.findUnique({
+    where: { id },
+    include: { contact: { select: { ownerId: true } } },
+  });
+  if (!o) throw notFound('ไม่พบ log การติดต่อนี้');
+  assertOwnership(user, o.contact.ownerId);
+  return o;
+}
 
 // ── โมดูล E: OutreachLog = ไล่ทักคู่ค้าทีละเจ้าต่อรอบ (ข้อ 4.4) ─────────
 //
@@ -16,13 +29,14 @@ type OutreachFilter = {
   contactId?: number;
 };
 
-export function listOutreach(filter: OutreachFilter) {
+export function listOutreach(user: AuthUser, filter: OutreachFilter) {
   return prisma.outreachLog.findMany({
     where: {
       round: filter.round,
       kind: filter.kind,
       status: filter.status,
       contactId: filter.contactId,
+      ...(isAdmin(user) ? {} : { contact: { ownerId: user.id } }),
     },
     orderBy: [{ round: 'desc' }, { id: 'asc' }],
     include: { contact: { select: { id: true, name: true, type: true, isRegular: true, phone: true } } },
@@ -38,10 +52,14 @@ function contactTypesFor(kind: TxnKind): ('BUYER' | 'SELLER' | 'BOTH')[] {
  * เปิดรอบใหม่: สร้าง log PENDING ให้คู่ค้าที่เกี่ยวข้อง (idempotent — ข้ามใบที่มีแล้ว)
  * ถ้าระบุ contactIds มา ใช้เฉพาะรายนั้น (ต้อง active) ไม่งั้นเอาคู่ค้า active ทุกเจ้าที่ type ตรง
  */
-export async function startRound(input: { round: number; kind: TxnKind; contactIds?: number[] }) {
+export async function startRound(
+  user: AuthUser,
+  input: { round: number; kind: TxnKind; contactIds?: number[] },
+) {
   const where: Prisma.ContactWhereInput = {
     active: true,
     type: { in: contactTypesFor(input.kind) },
+    ...(isAdmin(user) ? {} : { ownerId: user.id }), // เฉพาะคู่ค้าของ user
     ...(input.contactIds?.length ? { id: { in: input.contactIds } } : {}),
   };
   const contacts = await prisma.contact.findMany({ where, select: { id: true } });
@@ -57,19 +75,26 @@ export async function startRound(input: { round: number; kind: TxnKind; contactI
     skipDuplicates: true, // กันชนกับ unique [contactId, round, kind]
   });
 
-  return listOutreach({ round: input.round, kind: input.kind });
+  return listOutreach(user, { round: input.round, kind: input.kind });
 }
 
-export async function createOutreach(data: {
-  contactId: number;
-  round: number;
-  kind: TxnKind;
-  status?: OutreachStatus;
-  contactedAt?: Date | null;
-  note?: string | null;
-}) {
-  const contact = await prisma.contact.findUnique({ where: { id: data.contactId } });
+export async function createOutreach(
+  user: AuthUser,
+  data: {
+    contactId: number;
+    round: number;
+    kind: TxnKind;
+    status?: OutreachStatus;
+    contactedAt?: Date | null;
+    note?: string | null;
+  },
+) {
+  const contact = await prisma.contact.findUnique({
+    where: { id: data.contactId },
+    select: { ownerId: true },
+  });
   if (!contact) throw notFound('ไม่พบคู่ค้ารายนี้');
+  assertOwnership(user, contact.ownerId);
   try {
     return await prisma.outreachLog.create({
       data: {
@@ -91,10 +116,10 @@ export async function createOutreach(data: {
 
 export async function updateOutreach(
   id: number,
+  user: AuthUser,
   data: { status?: OutreachStatus; contactedAt?: Date | null; note?: string | null },
 ) {
-  const current = await prisma.outreachLog.findUnique({ where: { id } });
-  if (!current) throw notFound('ไม่พบ log การติดต่อนี้');
+  const current = await assertOutreachOwned(id, user);
 
   // เปลี่ยนสถานะออกจาก PENDING แต่ไม่ได้ระบุเวลา → บันทึกเวลาทักให้อัตโนมัติ
   const movedOffPending =
@@ -116,8 +141,7 @@ export async function updateOutreach(
   });
 }
 
-export async function deleteOutreach(id: number) {
-  const o = await prisma.outreachLog.findUnique({ where: { id } });
-  if (!o) throw notFound('ไม่พบ log การติดต่อนี้');
+export async function deleteOutreach(id: number, user: AuthUser) {
+  await assertOutreachOwned(id, user);
   await prisma.outreachLog.delete({ where: { id } });
 }

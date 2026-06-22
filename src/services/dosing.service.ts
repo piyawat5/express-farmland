@@ -1,6 +1,8 @@
 import { Prisma, WaterParam } from '@prisma/client';
 import { prisma } from '../lib/prisma';
-import { notFound } from '../lib/http';
+import { notFound, badRequest } from '../lib/http';
+import type { AuthUser } from './auth.service';
+import { isAdmin, ownerWhere, ownedSystemIds, assertOwnership } from '../lib/scope';
 
 // ── โมดูล C (dosing): Substance / DosingCalibration / DosingRule + คำนวณ dose ──
 //
@@ -42,38 +44,54 @@ export type DosingRecommendation = {
 const dec = (v: Prisma.Decimal | number | null | undefined): number | null =>
   v == null ? null : Number(v);
 
-// ── Substance (master list) ──────────────────────────────────────────
+/** assert ว่าระบบมีอยู่ + user เป็นเจ้าของ (ADMIN ผ่าน) */
+async function assertSystemOwner(systemId: number, user: AuthUser) {
+  const sys = await prisma.crabSystem.findUnique({
+    where: { id: systemId },
+    select: { ownerId: true },
+  });
+  if (!sys) throw notFound('ไม่พบระบบปูนี้');
+  assertOwnership(user, sys.ownerId);
+}
 
-export function listSubstances(includeInactive = false) {
+// ── Substance (คลังสารต่อ user) ───────────────────────────────────────
+
+export function listSubstances(user: AuthUser, includeInactive = false) {
   return prisma.substance.findMany({
-    where: includeInactive ? undefined : { active: true },
+    where: { ...ownerWhere(user), ...(includeInactive ? {} : { active: true }) },
     orderBy: { id: 'asc' },
   });
 }
 
-export async function getSubstance(id: number) {
+export async function getSubstance(id: number, user?: AuthUser) {
   const s = await prisma.substance.findUnique({ where: { id } });
   if (!s) throw notFound('ไม่พบสารนี้');
+  if (user) assertOwnership(user, s.ownerId);
   return s;
 }
 
-export function createSubstance(data: Prisma.SubstanceUncheckedCreateInput) {
-  return prisma.substance.create({ data });
+export function createSubstance(user: AuthUser, data: Prisma.SubstanceUncheckedCreateInput) {
+  return prisma.substance.create({ data: { ...data, ownerId: user.id } });
 }
 
-export async function updateSubstance(id: number, data: Prisma.SubstanceUncheckedUpdateInput) {
-  await getSubstance(id);
+export async function updateSubstance(
+  id: number,
+  user: AuthUser,
+  data: Prisma.SubstanceUncheckedUpdateInput,
+) {
+  await getSubstance(id, user);
   return prisma.substance.update({ where: { id }, data });
 }
 
-export async function deleteSubstance(id: number) {
-  await getSubstance(id);
+export async function deleteSubstance(id: number, user: AuthUser) {
+  await getSubstance(id, user);
   await prisma.substance.delete({ where: { id } });
 }
 
 // ── DosingCalibration (ต่อระบบ) ──────────────────────────────────────
 
-export function listCalibrations(systemId: number) {
+export async function listCalibrations(systemId: number, user: AuthUser) {
+  await assertSystemOwner(systemId, user);
   return prisma.dosingCalibration.findMany({
     where: { systemId },
     orderBy: { id: 'asc' },
@@ -86,6 +104,13 @@ export async function upsertCalibration(
   systemId: number,
   data: { substanceId: number; parameter: WaterParam; effectPerUnit: number; unit: string; note?: string | null },
 ) {
+  // สารต้องเป็นของเจ้าของระบบ (กันอ้างอิงสารของ user อื่น)
+  const [sys, sub] = await Promise.all([
+    prisma.crabSystem.findUnique({ where: { id: systemId }, select: { ownerId: true } }),
+    prisma.substance.findUnique({ where: { id: data.substanceId }, select: { ownerId: true } }),
+  ]);
+  if (!sub) throw notFound('ไม่พบสารนี้');
+  if (sys && sub.ownerId !== sys.ownerId) throw badRequest('สารนี้ไม่ใช่ของเจ้าของระบบ');
   return prisma.dosingCalibration.upsert({
     where: {
       systemId_substanceId_parameter: {
@@ -105,19 +130,39 @@ export async function deleteCalibration(id: number) {
   await prisma.dosingCalibration.delete({ where: { id } });
 }
 
-// ── DosingRule ───────────────────────────────────────────────────────
+// ── DosingRule (ผูกเจ้าของ; rule กลาง systemId=null ก็เป็นของ user) ────
 
-export function listRules(systemId?: number) {
+export async function listRules(user: AuthUser, systemId?: number) {
+  // มองเห็น = กฎของระบบที่ user เข้าถึง + กฎกลาง (systemId=null) ของ user เอง
+  let where: Prisma.DosingRuleWhereInput | undefined;
+  if (isAdmin(user)) {
+    where = systemId == null ? undefined : { OR: [{ systemId }, { systemId: null }] };
+  } else {
+    const owned = (await ownedSystemIds(user)) ?? [];
+    const sysClause =
+      systemId != null
+        ? { systemId: { in: owned.includes(systemId) ? [systemId] : [] } }
+        : { systemId: { in: owned } };
+    where = { OR: [sysClause, { systemId: null, ownerId: user.id }] };
+  }
   return prisma.dosingRule.findMany({
-    where:
-      systemId == null ? undefined : { OR: [{ systemId }, { systemId: null }] },
+    where,
     orderBy: { id: 'asc' },
     include: { substance: { select: { id: true, name: true, unit: true } } },
   });
 }
 
-export function createRule(data: Prisma.DosingRuleUncheckedCreateInput) {
-  return prisma.dosingRule.create({ data });
+/** สร้างกฎ — ownerId = เจ้าของระบบ (ถ้าผูกระบบ) ไม่งั้น = user (กฎกลาง) */
+export async function createRule(user: AuthUser, data: Prisma.DosingRuleUncheckedCreateInput) {
+  let ownerId: number = user.id;
+  if (data.systemId != null) {
+    const sys = await prisma.crabSystem.findUnique({
+      where: { id: Number(data.systemId) },
+      select: { ownerId: true },
+    });
+    ownerId = sys?.ownerId ?? user.id;
+  }
+  return prisma.dosingRule.create({ data: { ...data, ownerId } });
 }
 
 export async function updateRule(id: number, data: Prisma.DosingRuleUncheckedUpdateInput) {
@@ -141,10 +186,18 @@ export async function evaluateWaterValues(
   systemId: number,
   values: WaterValues,
 ): Promise<DosingRecommendation[]> {
+  // กฎกลาง (systemId=null) ใช้ได้เฉพาะของเจ้าของระบบนี้ — กันกฎข้าม user
+  const sys = await prisma.crabSystem.findUnique({
+    where: { id: systemId },
+    select: { ownerId: true },
+  });
   const [targets, rules, calibs] = await Promise.all([
     prisma.waterTarget.findMany({ where: { systemId } }),
     prisma.dosingRule.findMany({
-      where: { active: true, OR: [{ systemId }, { systemId: null }] },
+      where: {
+        active: true,
+        OR: [{ systemId }, { systemId: null, ownerId: sys?.ownerId ?? undefined }],
+      },
       include: { substance: { select: { id: true, name: true, unit: true } } },
     }),
     prisma.dosingCalibration.findMany({ where: { systemId } }),

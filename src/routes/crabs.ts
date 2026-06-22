@@ -4,6 +4,7 @@ import { asyncHandler } from '../lib/http';
 import { validate } from '../middleware/validate';
 import { serialize } from '../lib/serialize';
 import { idParam } from '../lib/validation';
+import { requireSystemEdit, systemIdFromBody, systemIdFromCrab } from '../middleware/auth';
 import * as svc from '../services/crab.service';
 
 // ════════════════════════════════════════════════════════════════════
@@ -17,6 +18,7 @@ const crabBody = z.object({
   code: z.string().nullable().optional(),
   systemId: z.number().int().positive(),
   boxId: z.number().int().positive().nullable().optional(),
+  cableTieColor: z.string().max(32).nullable().optional(), // สีเคเบิ้ลไทล์ (ข้อ 2.2)
   type: crabType.optional(),
   sourceSellerId: z.number().int().positive().nullable().optional(),
   buyerId: z.number().int().positive().nullable().optional(),
@@ -47,13 +49,14 @@ router.get(
   validate({ query: listQuery }),
   asyncHandler(async (req, res) => {
     const { systemId, status, type } = req.query as z.infer<typeof listQuery>;
-    res.json(serialize(await svc.listCrabs({ systemId, status, type })));
+    res.json(serialize(await svc.listCrabs(req.user!, { systemId, status, type })));
   }),
 );
 
 router.post(
   '/',
   validate({ body: crabBody }),
+  requireSystemEdit(systemIdFromBody('systemId')),
   asyncHandler(async (req, res) => {
     res.status(201).json(serialize(await svc.createCrab(req.body)));
   }),
@@ -63,13 +66,14 @@ router.get(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await svc.getCrab(Number(req.params.id))));
+    res.json(serialize(await svc.getCrab(Number(req.params.id), req.user!)));
   }),
 );
 
 router.patch(
   '/:id',
   validate({ params: idParam, body: crabBody.partial() }),
+  requireSystemEdit(systemIdFromCrab),
   asyncHandler(async (req, res) => {
     res.json(serialize(await svc.updateCrab(Number(req.params.id), req.body)));
   }),
@@ -78,6 +82,7 @@ router.patch(
 router.delete(
   '/:id',
   validate({ params: idParam }),
+  requireSystemEdit(systemIdFromCrab),
   asyncHandler(async (req, res) => {
     await svc.deleteCrab(Number(req.params.id));
     res.status(204).end();

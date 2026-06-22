@@ -2,6 +2,8 @@ import { InventoryCategory, Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { notFound } from '../lib/http';
 import { createTask } from './task.service';
+import type { AuthUser } from './auth.service';
+import { ownerWhere, assertOwnership } from '../lib/scope';
 
 // ── โมดูล G: InventoryItem = คลังของ (อาหารปู/สาร/อุปกรณ์) ─────────────
 //
@@ -15,21 +17,25 @@ function isLow(item: { currentQty: Prisma.Decimal | number; lowThreshold: Prisma
   return item.lowThreshold != null && num(item.currentQty) <= num(item.lowThreshold);
 }
 
-export async function listInventory(filter: { category?: InventoryCategory; lowOnly?: boolean }) {
+export async function listInventory(
+  user: AuthUser,
+  filter: { category?: InventoryCategory; lowOnly?: boolean },
+) {
   const items = await prisma.inventoryItem.findMany({
-    where: { category: filter.category },
+    where: { ...ownerWhere(user), category: filter.category },
     orderBy: [{ category: 'asc' }, { name: 'asc' }],
     include: { substance: { select: { id: true, name: true } } },
   });
   return filter.lowOnly ? items.filter(isLow) : items;
 }
 
-export async function getInventory(id: number) {
+export async function getInventory(id: number, user?: AuthUser) {
   const item = await prisma.inventoryItem.findUnique({
     where: { id },
     include: { substance: { select: { id: true, name: true } } },
   });
   if (!item) throw notFound('ไม่พบรายการในคลัง');
+  if (user) assertOwnership(user, item.ownerId);
   return item;
 }
 
@@ -43,9 +49,10 @@ export type CreateInventoryInput = {
   note?: string | null;
 };
 
-export async function createInventory(input: CreateInventoryInput) {
+export async function createInventory(user: AuthUser, input: CreateInventoryInput) {
   const item = await prisma.inventoryItem.create({
     data: {
+      ownerId: user.id,
       name: input.name,
       category: input.category,
       currentQty: input.currentQty ?? 0,
@@ -61,8 +68,8 @@ export async function createInventory(input: CreateInventoryInput) {
 
 export type UpdateInventoryInput = Partial<CreateInventoryInput>;
 
-export async function updateInventory(id: number, input: UpdateInventoryInput) {
-  await getInventory(id);
+export async function updateInventory(id: number, user: AuthUser, input: UpdateInventoryInput) {
+  await getInventory(id, user);
   const item = await prisma.inventoryItem.update({
     where: { id },
     data: {
@@ -80,16 +87,16 @@ export async function updateInventory(id: number, input: UpdateInventoryInput) {
 }
 
 /** ปรับจำนวนคงเหลือ (delta บวก = ซื้อเข้า, ลบ = ใช้ไป) — ไม่ต่ำกว่า 0 */
-export async function adjustInventory(id: number, delta: number) {
-  const current = await getInventory(id);
+export async function adjustInventory(id: number, user: AuthUser, delta: number) {
+  const current = await getInventory(id, user);
   const next = Math.max(0, Math.round((num(current.currentQty) + delta) * 100) / 100);
   const item = await prisma.inventoryItem.update({ where: { id }, data: { currentQty: next } });
   await syncRestockTask(item);
   return item;
 }
 
-export async function deleteInventory(id: number) {
-  await getInventory(id);
+export async function deleteInventory(id: number, user: AuthUser) {
+  await getInventory(id, user);
   // ตัดลิงก์ Task RESTOCK ที่ค้างของของชิ้นนี้ก่อนลบ
   await prisma.task.updateMany({
     where: { status: 'PENDING', type: 'RESTOCK', linkType: 'InventoryItem', linkId: id },
@@ -101,6 +108,7 @@ export async function deleteInventory(id: number) {
 type RestockItem = {
   id: number;
   name: string;
+  ownerId: number | null;
   currentQty: Prisma.Decimal | number;
   unit: string;
   lowThreshold: Prisma.Decimal | number | null;
@@ -131,8 +139,8 @@ async function ensureRestockTask(item: RestockItem, now: Date, ownerId: number |
  */
 async function syncRestockTask(item: RestockItem) {
   if (isLow(item)) {
-    const owner = await prisma.user.findFirst({ where: { active: true }, orderBy: { id: 'asc' } });
-    await ensureRestockTask(item, new Date(), owner?.id ?? null);
+    // ปลายทางแจ้งเตือน = เจ้าของคลังของชิ้นนี้ (per-user)
+    await ensureRestockTask(item, new Date(), item.ownerId);
   } else {
     await prisma.task.updateMany({
       where: { status: 'PENDING', type: 'RESTOCK', linkType: 'InventoryItem', linkId: item.id },
@@ -150,10 +158,10 @@ export async function generateRestockTasks(now: Date): Promise<number> {
   const low = items.filter(isLow);
   if (low.length === 0) return 0;
 
-  const owner = await prisma.user.findFirst({ where: { active: true }, orderBy: { id: 'asc' } });
   let created = 0;
   for (const it of low) {
-    created += await ensureRestockTask(it, now, owner?.id ?? null);
+    // ปลายทาง = เจ้าของของชิ้นนั้นๆ (multi-user)
+    created += await ensureRestockTask(it, now, it.ownerId);
   }
   return created;
 }

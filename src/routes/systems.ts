@@ -4,6 +4,12 @@ import { asyncHandler } from '../lib/http';
 import { validate } from '../middleware/validate';
 import { serialize } from '../lib/serialize';
 import { idParam } from '../lib/validation';
+import {
+  requireSystemEdit,
+  systemIdFromParam,
+  systemIdFromBox,
+  systemIdFromFilterTank,
+} from '../middleware/auth';
 import * as svc from '../services/system.service';
 
 // ════════════════════════════════════════════════════════════════════
@@ -19,6 +25,7 @@ const systemBody = z.object({
   maxLevelNote: z.string().optional(),
   status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
   ownerId: z.number().int().positive().optional(),
+  notifyEmail: z.string().email().nullable().optional(), // อีเมลแจ้งเตือนเฉพาะระบบ (ข้อ 4)
   note: z.string().optional(),
 });
 
@@ -56,8 +63,8 @@ export const systemRouter = Router();
 
 systemRouter.get(
   '/',
-  asyncHandler(async (_req, res) => {
-    res.json(serialize(await svc.listSystems()));
+  asyncHandler(async (req, res) => {
+    res.json(serialize(await svc.listSystems(req.user!)));
   }),
 );
 
@@ -65,7 +72,9 @@ systemRouter.post(
   '/',
   validate({ body: systemBody }),
   asyncHandler(async (req, res) => {
-    res.status(201).json(serialize(await svc.createSystem(req.body)));
+    // เจ้าของระบบ = ผู้สร้าง (เว้นแต่ระบุ ownerId มาเอง) → ใช้คุมสิทธิ์แก้ไขภายหลัง
+    const ownerId = (req.body.ownerId as number | undefined) ?? req.user!.id;
+    res.status(201).json(serialize(await svc.createSystem({ ...req.body, ownerId })));
   }),
 );
 
@@ -73,13 +82,14 @@ systemRouter.get(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await svc.getSystem(Number(req.params.id))));
+    res.json(serialize(await svc.getSystem(Number(req.params.id), req.user!)));
   }),
 );
 
 systemRouter.patch(
   '/:id',
   validate({ params: idParam, body: systemBody.partial() }),
+  requireSystemEdit(systemIdFromParam()),
   asyncHandler(async (req, res) => {
     res.json(serialize(await svc.updateSystem(Number(req.params.id), req.body)));
   }),
@@ -88,6 +98,7 @@ systemRouter.patch(
 systemRouter.delete(
   '/:id',
   validate({ params: idParam }),
+  requireSystemEdit(systemIdFromParam()),
   asyncHandler(async (req, res) => {
     await svc.deleteSystem(Number(req.params.id));
     res.status(204).end();
@@ -99,13 +110,14 @@ systemRouter.get(
   '/:id/boxes',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await svc.listBoxes(Number(req.params.id))));
+    res.json(serialize(await svc.listBoxes(Number(req.params.id), req.user!)));
   }),
 );
 
 systemRouter.post(
   '/:id/boxes',
   validate({ params: idParam, body: boxBody }),
+  requireSystemEdit(systemIdFromParam()),
   asyncHandler(async (req, res) => {
     res.status(201).json(serialize(await svc.createBox(Number(req.params.id), req.body)));
   }),
@@ -115,6 +127,7 @@ systemRouter.post(
 systemRouter.post(
   '/:id/boxes/generate',
   validate({ params: idParam, body: generateBoxesBody }),
+  requireSystemEdit(systemIdFromParam()),
   asyncHandler(async (req, res) => {
     res.status(201).json(await svc.generateBoxes(Number(req.params.id), req.body));
   }),
@@ -124,6 +137,7 @@ systemRouter.post(
 systemRouter.post(
   '/:id/boxes/generate-grid',
   validate({ params: idParam, body: generateGridBody }),
+  requireSystemEdit(systemIdFromParam()),
   asyncHandler(async (req, res) => {
     res.status(201).json(await svc.generateBoxGrid(Number(req.params.id), req.body));
   }),
@@ -134,13 +148,14 @@ systemRouter.get(
   '/:id/filter-tanks',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await svc.listFilterTanks(Number(req.params.id))));
+    res.json(serialize(await svc.listFilterTanks(Number(req.params.id), req.user!)));
   }),
 );
 
 systemRouter.post(
   '/:id/filter-tanks',
   validate({ params: idParam, body: filterTankBody }),
+  requireSystemEdit(systemIdFromParam()),
   asyncHandler(async (req, res) => {
     res.status(201).json(serialize(await svc.createFilterTank(Number(req.params.id), req.body)));
   }),
@@ -152,6 +167,7 @@ export const boxRouter = Router();
 boxRouter.patch(
   '/:id',
   validate({ params: idParam, body: boxBody.partial() }),
+  requireSystemEdit(systemIdFromBox),
   asyncHandler(async (req, res) => {
     res.json(serialize(await svc.updateBox(Number(req.params.id), req.body)));
   }),
@@ -160,6 +176,7 @@ boxRouter.patch(
 boxRouter.delete(
   '/:id',
   validate({ params: idParam }),
+  requireSystemEdit(systemIdFromBox),
   asyncHandler(async (req, res) => {
     await svc.deleteBox(Number(req.params.id));
     res.status(204).end();
@@ -172,6 +189,7 @@ export const filterTankRouter = Router();
 filterTankRouter.patch(
   '/:id',
   validate({ params: idParam, body: filterTankBody.partial() }),
+  requireSystemEdit(systemIdFromFilterTank),
   asyncHandler(async (req, res) => {
     res.json(serialize(await svc.updateFilterTank(Number(req.params.id), req.body)));
   }),
@@ -180,6 +198,7 @@ filterTankRouter.patch(
 filterTankRouter.delete(
   '/:id',
   validate({ params: idParam }),
+  requireSystemEdit(systemIdFromFilterTank),
   asyncHandler(async (req, res) => {
     await svc.deleteFilterTank(Number(req.params.id));
     res.status(204).end();

@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { notFound } from '../lib/http';
+import type { AuthUser } from './auth.service';
+import { ownerWhere, assertOwnership } from '../lib/scope';
 
 // ── โมดูล E: Contact = คู่ค้า (ผู้ซื้อ/ผู้ขาย, เจ้าเดียวเป็นได้ทั้งคู่) ────
 
@@ -10,9 +12,10 @@ type ContactFilter = {
   active?: boolean;
 };
 
-export function listContacts(filter: ContactFilter) {
+export function listContacts(user: AuthUser, filter: ContactFilter) {
   return prisma.contact.findMany({
     where: {
+      ...ownerWhere(user),
       type: filter.type,
       isRegular: filter.isRegular,
       active: filter.active,
@@ -21,7 +24,7 @@ export function listContacts(filter: ContactFilter) {
   });
 }
 
-export async function getContact(id: number) {
+export async function getContact(id: number, user: AuthUser) {
   const contact = await prisma.contact.findUnique({
     where: { id },
     include: {
@@ -30,21 +33,28 @@ export async function getContact(id: number) {
     },
   });
   if (!contact) throw notFound('ไม่พบคู่ค้ารายนี้');
+  assertOwnership(user, contact.ownerId);
   return contact;
 }
 
-export function createContact(data: Prisma.ContactUncheckedCreateInput) {
-  return prisma.contact.create({ data });
+export function createContact(user: AuthUser, data: Prisma.ContactUncheckedCreateInput) {
+  return prisma.contact.create({ data: { ...data, ownerId: user.id } });
 }
 
-export async function updateContact(id: number, data: Prisma.ContactUncheckedUpdateInput) {
+export async function updateContact(
+  id: number,
+  user: AuthUser,
+  data: Prisma.ContactUncheckedUpdateInput,
+) {
   const c = await prisma.contact.findUnique({ where: { id } });
   if (!c) throw notFound('ไม่พบคู่ค้ารายนี้');
+  assertOwnership(user, c.ownerId);
   return prisma.contact.update({ where: { id }, data });
 }
 
-export async function deleteContact(id: number) {
+export async function deleteContact(id: number, user: AuthUser) {
   const c = await prisma.contact.findUnique({ where: { id } });
   if (!c) throw notFound('ไม่พบคู่ค้ารายนี้');
+  assertOwnership(user, c.ownerId);
   await prisma.contact.delete({ where: { id } });
 }

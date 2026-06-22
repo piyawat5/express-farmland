@@ -4,6 +4,7 @@ import { asyncHandler } from '../lib/http';
 import { validate } from '../middleware/validate';
 import { serialize } from '../lib/serialize';
 import { idParam, pageQuery } from '../lib/validation';
+import { requireSystemEdit, systemIdFromParam, systemIdFromWaterTest } from '../middleware/auth';
 import * as svc from '../services/water.service';
 
 // ════════════════════════════════════════════════════════════════════
@@ -51,13 +52,14 @@ waterSystemRouter.get(
   validate({ params: idParam, query: pageQuery }),
   asyncHandler(async (req, res) => {
     const { skip, take } = req.query as z.infer<typeof pageQuery>;
-    res.json(serialize(await svc.listWaterTests(Number(req.params.id), { skip, take })));
+    res.json(serialize(await svc.listWaterTests(Number(req.params.id), req.user!, { skip, take })));
   }),
 );
 
 waterSystemRouter.post(
   '/:id/water-tests',
   validate({ params: idParam, body: waterTestBody }),
+  requireSystemEdit(systemIdFromParam()),
   asyncHandler(async (req, res) => {
     const result = await svc.createWaterTest({ ...req.body, systemId: Number(req.params.id) });
     res.status(201).json(serialize(result));
@@ -68,7 +70,7 @@ waterSystemRouter.get(
   '/:id/water-targets',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await svc.listWaterTargets(Number(req.params.id))));
+    res.json(serialize(await svc.listWaterTargets(Number(req.params.id), req.user!)));
   }),
 );
 
@@ -76,6 +78,7 @@ waterSystemRouter.get(
 waterSystemRouter.put(
   '/:id/water-targets',
   validate({ params: idParam, body: waterTargetBody }),
+  requireSystemEdit(systemIdFromParam()),
   asyncHandler(async (req, res) => {
     res.json(serialize(await svc.upsertWaterTarget(Number(req.params.id), req.body)));
   }),
@@ -86,7 +89,7 @@ waterSystemRouter.post(
   '/:id/dosing-preview',
   validate({ params: idParam, body: waterValues }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await svc.previewDosing(Number(req.params.id), req.body)));
+    res.json(serialize(await svc.previewDosing(Number(req.params.id), req.body, req.user!)));
   }),
 );
 
@@ -97,13 +100,14 @@ waterTestRouter.get(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await svc.getWaterTest(Number(req.params.id))));
+    res.json(serialize(await svc.getWaterTest(Number(req.params.id), req.user!)));
   }),
 );
 
 waterTestRouter.patch(
   '/:id',
   validate({ params: idParam, body: waterTestBody.partial() }),
+  requireSystemEdit(systemIdFromWaterTest),
   asyncHandler(async (req, res) => {
     res.json(serialize(await svc.updateWaterTest(Number(req.params.id), req.body)));
   }),
@@ -112,6 +116,7 @@ waterTestRouter.patch(
 waterTestRouter.delete(
   '/:id',
   validate({ params: idParam }),
+  requireSystemEdit(systemIdFromWaterTest),
   asyncHandler(async (req, res) => {
     await svc.deleteWaterTest(Number(req.params.id));
     res.status(204).end();

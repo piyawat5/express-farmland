@@ -3,6 +3,8 @@ import { prisma } from '../lib/prisma';
 import { notFound } from '../lib/http';
 import { nextCronAfter } from '../lib/cron';
 import { createTaskFromRule } from './task.service';
+import type { AuthUser } from './auth.service';
+import { isAdmin, ownedSystemIds, assertOwnership } from '../lib/scope';
 
 // ── โมดูล D: ReminderRule = กฎแจ้งเตือน (อะไร/เมื่อไร/ตามจิกทุกกี่นาที) ──
 
@@ -71,21 +73,34 @@ export function computeNextRunAt(rule: ScheduleFields, after: Date): Date | null
 
 // ── CRUD ─────────────────────────────────────────────────────────────
 
-export function listReminderRules(systemId?: number) {
-  return prisma.reminderRule.findMany({
-    where: systemId == null ? undefined : { OR: [{ systemId }, { systemId: null }] },
-    orderBy: { id: 'asc' },
-  });
+export async function listReminderRules(user: AuthUser, systemId?: number) {
+  // มองเห็น = กฎของระบบที่ user เข้าถึง + กฎกลาง (systemId=null) ของ user เอง
+  let where: Prisma.ReminderRuleWhereInput | undefined;
+  if (isAdmin(user)) {
+    where = systemId == null ? undefined : { OR: [{ systemId }, { systemId: null }] };
+  } else {
+    const owned = (await ownedSystemIds(user)) ?? [];
+    const sysClause =
+      systemId != null
+        ? { systemId: { in: owned.includes(systemId) ? [systemId] : [] } }
+        : { systemId: { in: owned } };
+    where = { OR: [sysClause, { systemId: null, ownerId: user.id }] };
+  }
+  return prisma.reminderRule.findMany({ where, orderBy: { id: 'asc' } });
 }
 
-export async function getReminderRule(id: number) {
+export async function getReminderRule(id: number, user?: AuthUser) {
   const rule = await prisma.reminderRule.findUnique({ where: { id } });
   if (!rule) throw notFound('ไม่พบกฎแจ้งเตือนนี้');
+  if (user) assertOwnership(user, rule.ownerId);
   return rule;
 }
 
-/** สร้างกฎ — คำนวณ nextRunAt ให้เลยถ้าเป็นแบบตามเวลา + active */
-export async function createReminderRule(data: Prisma.ReminderRuleUncheckedCreateInput) {
+/** สร้างกฎ — ownerId = เจ้าของระบบ (ถ้าผูกระบบ) ไม่งั้น = user; คำนวณ nextRunAt ถ้าตามเวลา + active */
+export async function createReminderRule(
+  user: AuthUser,
+  data: Prisma.ReminderRuleUncheckedCreateInput,
+) {
   const active = data.active ?? true;
   const nextRunAt =
     active && data.scheduleKind !== 'EVENT'
@@ -99,12 +114,24 @@ export async function createReminderRule(data: Prisma.ReminderRuleUncheckedCreat
           new Date(),
         )
       : null;
-  return prisma.reminderRule.create({ data: { ...data, nextRunAt } });
+  let ownerId: number = user.id;
+  if (data.systemId != null) {
+    const sys = await prisma.crabSystem.findUnique({
+      where: { id: Number(data.systemId) },
+      select: { ownerId: true },
+    });
+    ownerId = sys?.ownerId ?? user.id;
+  }
+  return prisma.reminderRule.create({ data: { ...data, ownerId, nextRunAt } });
 }
 
 /** แก้กฎ — ถ้าแตะฟิลด์ตารางเวลา/active → คำนวณ nextRunAt ใหม่ */
-export async function updateReminderRule(id: number, data: Prisma.ReminderRuleUncheckedUpdateInput) {
-  const current = await getReminderRule(id);
+export async function updateReminderRule(
+  id: number,
+  user: AuthUser,
+  data: Prisma.ReminderRuleUncheckedUpdateInput,
+) {
+  const current = await getReminderRule(id, user);
   const merged = { ...current, ...data } as ReminderRule;
 
   const scheduleTouched =
@@ -126,8 +153,8 @@ export async function updateReminderRule(id: number, data: Prisma.ReminderRuleUn
   });
 }
 
-export async function deleteReminderRule(id: number) {
-  await getReminderRule(id);
+export async function deleteReminderRule(id: number, user: AuthUser) {
+  await getReminderRule(id, user);
   await prisma.reminderRule.delete({ where: { id } });
 }
 
@@ -137,12 +164,17 @@ export async function deleteReminderRule(id: number) {
 // dueAt = ตอนนี้ + leadDays (ถ้าตั้งไว้)
 
 export async function fireEvent(event: TriggerEvent, systemId: number): Promise<number> {
+  // กฎกลาง (systemId=null) ใช้ได้เฉพาะของเจ้าของระบบนี้ — กันกฎข้าม user
+  const sys = await prisma.crabSystem.findUnique({
+    where: { id: systemId },
+    select: { ownerId: true },
+  });
   const rules = await prisma.reminderRule.findMany({
     where: {
       active: true,
       scheduleKind: 'EVENT',
       triggerEvent: event,
-      OR: [{ systemId }, { systemId: null }],
+      OR: [{ systemId }, { systemId: null, ownerId: sys?.ownerId ?? undefined }],
     },
   });
 

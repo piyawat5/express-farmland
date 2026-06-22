@@ -1,11 +1,14 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { notFound } from '../lib/http';
+import type { AuthUser } from './auth.service';
+import { ownerWhere, assertOwnership } from '../lib/scope';
 
 // ── โมดูล A: CrabSystem = ระบบน้ำ RAS 1 ชุด ───────────────────────────
 
-export function listSystems() {
+export function listSystems(user: AuthUser) {
   return prisma.crabSystem.findMany({
+    where: ownerWhere(user),
     orderBy: { createdAt: 'asc' },
     include: {
       owner: { select: { id: true, name: true, email: true } },
@@ -14,7 +17,8 @@ export function listSystems() {
   });
 }
 
-export async function getSystem(id: number) {
+/** ดึงระบบ — ถ้าส่ง user มาด้วยจะ assert ว่าเป็นเจ้าของ (ADMIN ผ่าน); ไม่ส่ง = ใช้ภายในที่ guard มาแล้ว */
+export async function getSystem(id: number, user?: AuthUser) {
   const system = await prisma.crabSystem.findUnique({
     where: { id },
     include: {
@@ -25,6 +29,7 @@ export async function getSystem(id: number) {
     },
   });
   if (!system) throw notFound('ไม่พบระบบปูนี้');
+  if (user) assertOwnership(user, system.ownerId);
   return system;
 }
 
@@ -51,7 +56,8 @@ export async function deleteSystem(id: number) {
 
 // ── CrabBox (1 กล่อง = ปู 1 ตัว) ─────────────────────────────────────
 
-export function listBoxes(systemId: number) {
+export async function listBoxes(systemId: number, user: AuthUser) {
+  await getSystem(systemId, user); // assert เจ้าของระบบก่อน (กันอ่านกล่องข้ามเจ้าของ)
   return prisma.crabBox.findMany({
     where: { systemId },
     orderBy: { id: 'asc' },
@@ -114,7 +120,8 @@ export async function deleteBox(id: number) {
 
 // ── FilterTank (ถังกรอง) ─────────────────────────────────────────────
 
-export function listFilterTanks(systemId: number) {
+export async function listFilterTanks(systemId: number, user: AuthUser) {
+  await getSystem(systemId, user); // assert เจ้าของระบบก่อน
   return prisma.filterTank.findMany({
     where: { systemId },
     orderBy: { id: 'asc' },

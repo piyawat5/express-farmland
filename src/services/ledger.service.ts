@@ -1,6 +1,8 @@
 import { LedgerKind, Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { notFound } from '../lib/http';
+import type { AuthUser } from './auth.service';
+import { ownerWhere, assertOwnership } from '../lib/scope';
 
 // ── โมดูล F: LedgerEntry = สมุดบัญชีรวม income/expense ──────────────────
 //
@@ -32,9 +34,10 @@ function dateRange(from?: Date, to?: Date): Prisma.DateTimeFilter | undefined {
   return { gte: from, lte: to };
 }
 
-export function listLedger(filter: LedgerFilter) {
+export function listLedger(user: AuthUser, filter: LedgerFilter) {
   return prisma.ledgerEntry.findMany({
     where: {
+      ...ownerWhere(user),
       systemId: filter.systemId,
       kind: filter.kind,
       category: filter.category,
@@ -47,12 +50,13 @@ export function listLedger(filter: LedgerFilter) {
   });
 }
 
-export async function getLedger(id: number) {
+export async function getLedger(id: number, user: AuthUser) {
   const entry = await prisma.ledgerEntry.findUnique({
     where: { id },
     include: { transaction: { select: { id: true, kind: true, contactId: true } } },
   });
   if (!entry) throw notFound('ไม่พบรายการบัญชีนี้');
+  assertOwnership(user, entry.ownerId);
   return entry;
 }
 
@@ -65,9 +69,10 @@ export type CreateLedgerInput = {
   note?: string | null;
 };
 
-export function createLedger(input: CreateLedgerInput) {
+export function createLedger(user: AuthUser, input: CreateLedgerInput) {
   return prisma.ledgerEntry.create({
     data: {
+      ownerId: user.id,
       systemId: input.systemId ?? null,
       kind: input.kind,
       category: input.category,
@@ -80,9 +85,10 @@ export function createLedger(input: CreateLedgerInput) {
 
 export type UpdateLedgerInput = Partial<CreateLedgerInput>;
 
-export async function updateLedger(id: number, input: UpdateLedgerInput) {
+export async function updateLedger(id: number, user: AuthUser, input: UpdateLedgerInput) {
   const current = await prisma.ledgerEntry.findUnique({ where: { id } });
   if (!current) throw notFound('ไม่พบรายการบัญชีนี้');
+  assertOwnership(user, current.ownerId);
   // รายการที่ผูกกับ Transaction (auto) ห้ามแก้มือ — ให้แก้ที่ Transaction แทน
   if (current.transactionId != null) {
     throw notFound('รายการนี้สร้างจากการซื้อขายอัตโนมัติ — แก้ไขที่ Transaction แทน');
@@ -100,9 +106,10 @@ export async function updateLedger(id: number, input: UpdateLedgerInput) {
   });
 }
 
-export async function deleteLedger(id: number) {
+export async function deleteLedger(id: number, user: AuthUser) {
   const entry = await prisma.ledgerEntry.findUnique({ where: { id } });
   if (!entry) throw notFound('ไม่พบรายการบัญชีนี้');
+  assertOwnership(user, entry.ownerId);
   await prisma.ledgerEntry.delete({ where: { id } });
 }
 
@@ -115,7 +122,11 @@ export async function deleteLedger(id: number) {
 export async function syncLedgerForTransaction(transactionId: number) {
   const txn = await prisma.transaction.findUnique({
     where: { id: transactionId },
-    include: { crab: { select: { systemId: true } }, ledgerEntry: true },
+    include: {
+      crab: { select: { systemId: true } },
+      contact: { select: { ownerId: true } },
+      ledgerEntry: true,
+    },
   });
   if (!txn) return;
 
@@ -125,6 +136,7 @@ export async function syncLedgerForTransaction(transactionId: number) {
   }
 
   const data = {
+    ownerId: txn.contact.ownerId, // เจ้าของรายการบัญชี = เจ้าของคู่ค้า
     systemId: txn.crab?.systemId ?? null,
     kind: txn.kind === 'SELL' ? LedgerKind.INCOME : LedgerKind.EXPENSE,
     category: txn.kind === 'SELL' ? 'CRAB_SALE' : 'CRAB_PURCHASE',

@@ -10,6 +10,7 @@
  *  - การคำนวณ dosing จริงอิง calibration ต่อระบบ (ดู memory: dosing-calibration-model)
  */
 import { PrismaClient, SubstanceCategory, WaterParam } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 import { nextCronAfter } from '../src/lib/cron';
 
 const prisma = new PrismaClient();
@@ -77,13 +78,30 @@ const SUBSTANCES: {
 ];
 
 async function main() {
-  // 1) เจ้าของระบบ
+  // 1) เจ้าของระบบ = admin (ทำได้ทุกอย่าง)
+  //    ตั้งรหัสผ่านเริ่มต้นได้ผ่าน env SEED_ADMIN_PASSWORD (ถ้ายังไม่มี passwordHash)
+  const seedPassword = process.env.SEED_ADMIN_PASSWORD;
+  const passwordHash = seedPassword ? await bcrypt.hash(seedPassword, 10) : undefined;
   const owner = await prisma.user.upsert({
     where: { email: OWNER_EMAIL },
-    update: { notifyByEmail: true, active: true },
-    create: { email: OWNER_EMAIL, name: 'เจ้าของฟาร์ม', notifyByEmail: true },
+    update: {
+      notifyByEmail: true,
+      active: true,
+      role: 'ADMIN',
+      ...(passwordHash ? { passwordHash } : {}),
+    },
+    create: {
+      email: OWNER_EMAIL,
+      name: 'เจ้าของฟาร์ม',
+      notifyByEmail: true,
+      role: 'ADMIN',
+      passwordHash: passwordHash ?? null,
+    },
   });
-  console.log(`👤 user: ${owner.email} (id ${owner.id})`);
+  console.log(
+    `👤 user: ${owner.email} (id ${owner.id}, role ${owner.role}` +
+      `${passwordHash ? ', ตั้งรหัสผ่านแล้ว' : ', ยังไม่มีรหัสผ่าน — ตั้งผ่าน SEED_ADMIN_PASSWORD'})`,
+  );
 
   // 2) CrabSystem (ไม่มี unique บน name → หาเองก่อน)
   let system = await prisma.crabSystem.findFirst({
@@ -134,10 +152,10 @@ async function main() {
   }
   console.log(`🎯 water targets: ${WATER_TARGETS.length} พารามิเตอร์ (min/max ยังว่าง)`);
 
-  // 6) Substance master list
+  // 6) Substance master list (ผูกเจ้าของ = admin; per-user isolation)
   for (const s of SUBSTANCES) {
     await prisma.substance.upsert({
-      where: { name: s.name },
+      where: { ownerId_name: { ownerId: owner.id, name: s.name } },
       update: {
         category: s.category,
         unit: s.unit,
@@ -147,6 +165,7 @@ async function main() {
         note: s.note ?? null,
       },
       create: {
+        ownerId: owner.id,
         name: s.name,
         category: s.category,
         unit: s.unit,
@@ -195,9 +214,12 @@ async function main() {
       where: { systemId: system.id, type: r.type, title: r.title },
     });
     if (existing) {
-      await prisma.reminderRule.update({ where: { id: existing.id }, data: { ...r, systemId: system.id } });
+      await prisma.reminderRule.update({
+        where: { id: existing.id },
+        data: { ...r, systemId: system.id, ownerId: owner.id },
+      });
     } else {
-      await prisma.reminderRule.create({ data: { ...r, systemId: system.id } });
+      await prisma.reminderRule.create({ data: { ...r, systemId: system.id, ownerId: owner.id } });
     }
   }
   console.log(`🔔 reminder rules: ${REMINDER_RULES.length} กฎ (วัดน้ำ/ให้อาหาร/วัดน้ำหลังเติมน้ำจืด)`);
@@ -215,11 +237,13 @@ async function main() {
     { name: 'ฟาร์มต้นทาง (ซื้อปูเข้า)', type: 'SELLER' },
   ];
   for (const c of CONTACTS) {
-    const existing = await prisma.contact.findFirst({ where: { name: c.name, type: c.type } });
+    const existing = await prisma.contact.findFirst({
+      where: { name: c.name, type: c.type, ownerId: owner.id },
+    });
     if (existing) {
       await prisma.contact.update({ where: { id: existing.id }, data: c });
     } else {
-      await prisma.contact.create({ data: c });
+      await prisma.contact.create({ data: { ...c, ownerId: owner.id } });
     }
   }
   console.log(`🤝 contacts: ${CONTACTS.length} ราย (ผู้ซื้อประจำ/คนกลาง/ผู้ขาย)`);

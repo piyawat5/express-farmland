@@ -28,6 +28,20 @@ const schema = z.object({
   MAIL_FROM: z.string().optional(), // ถ้าไม่ตั้ง ใช้ EMAIL_USER
   MAIL_TO: z.string().optional(), // fallback ปลายทาง (ปกติ resolve จาก User.email)
 
+  // Auth (JWT access + refresh)
+  JWT_ACCESS_SECRET: z.string().min(1, 'JWT_ACCESS_SECRET is required'),
+  JWT_REFRESH_SECRET: z.string().min(1, 'JWT_REFRESH_SECRET is required'),
+  ACCESS_TOKEN_TTL: z.string().default('15m'), // อายุ access token (เช่น 15m, 1h)
+  REFRESH_TOKEN_TTL: z.string().default('30d'), // อายุ refresh token (เช่น 30d)
+  FRONTEND_URL: z.string().default('http://localhost:5173'), // ใช้ตอน OAuth redirect (Phase 2)
+
+  // OAuth (Phase 2 — optional จนกว่าจะตั้งค่า)
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  LINE_CHANNEL_ID: z.string().optional(),
+  LINE_CHANNEL_SECRET: z.string().optional(),
+  OAUTH_CALLBACK_BASE: z.string().optional(), // เช่น http://localhost:3000/api/auth/oauth
+
   // Scheduler
   SCHEDULER_SECRET: z.string().min(1, 'SCHEDULER_SECRET is required'),
   ENABLE_INTERNAL_CRON: z

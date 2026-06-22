@@ -3,17 +3,25 @@ import { prisma } from '../lib/prisma';
 import { notFound } from '../lib/http';
 import { evaluateWaterValues, type DosingRecommendation, type WaterValues } from './dosing.service';
 import { closeTaskByRecord, createTask, findOpenTask } from './task.service';
+import type { AuthUser } from './auth.service';
+import { assertOwnership } from '../lib/scope';
 
 // ── โมดูล C (น้ำ): WaterTest + WaterTarget ───────────────────────────
 
-async function assertSystem(systemId: number) {
-  const exists = await prisma.crabSystem.findUnique({ where: { id: systemId }, select: { id: true } });
-  if (!exists) throw notFound('ไม่พบระบบปูนี้');
+/** เช็คว่าระบบมีอยู่ + (ถ้าส่ง user) เป็นเจ้าของ — ADMIN ผ่าน */
+async function assertSystem(systemId: number, user?: AuthUser) {
+  const sys = await prisma.crabSystem.findUnique({
+    where: { id: systemId },
+    select: { id: true, ownerId: true },
+  });
+  if (!sys) throw notFound('ไม่พบระบบปูนี้');
+  if (user) assertOwnership(user, sys.ownerId);
 }
 
 // ── WaterTarget (ช่วงเป้าหมาย min/max ต่อระบบ) ───────────────────────
 
-export function listWaterTargets(systemId: number) {
+export async function listWaterTargets(systemId: number, user: AuthUser) {
+  await assertSystem(systemId, user);
   return prisma.waterTarget.findMany({ where: { systemId }, orderBy: { id: 'asc' } });
 }
 
@@ -42,7 +50,12 @@ export async function upsertWaterTarget(
 
 // ── WaterTest ────────────────────────────────────────────────────────
 
-export function listWaterTests(systemId: number, page: { skip?: number; take?: number } = {}) {
+export async function listWaterTests(
+  systemId: number,
+  user: AuthUser,
+  page: { skip?: number; take?: number } = {},
+) {
+  await assertSystem(systemId, user);
   return prisma.waterTest.findMany({
     where: { systemId },
     orderBy: { testedAt: 'desc' },
@@ -51,12 +64,13 @@ export function listWaterTests(systemId: number, page: { skip?: number; take?: n
   });
 }
 
-export async function getWaterTest(id: number) {
+export async function getWaterTest(id: number, user?: AuthUser) {
   const test = await prisma.waterTest.findUnique({
     where: { id },
-    include: { dosingRecords: true },
+    include: { dosingRecords: true, system: { select: { ownerId: true } } },
   });
   if (!test) throw notFound('ไม่พบผลวัดน้ำนี้');
+  if (user) assertOwnership(user, test.system.ownerId);
   return test;
 }
 
@@ -158,7 +172,7 @@ export async function deleteWaterTest(id: number) {
 }
 
 /** ประเมินคำแนะนำจากค่าที่กรอกเข้ามาตรงๆ โดยไม่บันทึก (preview ก่อนวัดจริง) */
-export async function previewDosing(systemId: number, values: WaterValues) {
-  await assertSystem(systemId);
+export async function previewDosing(systemId: number, values: WaterValues, user: AuthUser) {
+  await assertSystem(systemId, user);
   return evaluateWaterValues(systemId, values);
 }

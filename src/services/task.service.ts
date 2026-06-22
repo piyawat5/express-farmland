@@ -1,6 +1,8 @@
 import { Prisma, ReminderRule, ReminderType, TaskStatus } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { notFound, badRequest } from '../lib/http';
+import type { AuthUser } from './auth.service';
+import { isAdmin, assertOwnership } from '../lib/scope';
 
 // ── โมดูล D: Task = งานจริง 1 ชิ้น (instance ของ ReminderRule หรือ event chain) ──
 //
@@ -13,15 +15,20 @@ type TaskFilter = {
   type?: ReminderType;
 };
 
-export function listTasks(filter: TaskFilter = {}) {
+export function listTasks(user: AuthUser, filter: TaskFilter = {}) {
   return prisma.task.findMany({
-    where: { systemId: filter.systemId, status: filter.status, type: filter.type },
+    where: {
+      systemId: filter.systemId,
+      status: filter.status,
+      type: filter.type,
+      ...(isAdmin(user) ? {} : { userId: user.id }), // งานของ user เท่านั้น
+    },
     orderBy: [{ status: 'asc' }, { dueAt: 'asc' }],
     include: { system: { select: { id: true, name: true } } },
   });
 }
 
-export async function getTask(id: number) {
+export async function getTask(id: number, user?: AuthUser) {
   const task = await prisma.task.findUnique({
     where: { id },
     include: {
@@ -32,6 +39,7 @@ export async function getTask(id: number) {
     },
   });
   if (!task) throw notFound('ไม่พบงานนี้');
+  if (user) assertOwnership(user, task.userId);
   return task;
 }
 
@@ -104,6 +112,7 @@ export function createTaskFromRule(rule: ReminderRule, dueAt: Date, parentTaskId
   return createTask({
     systemId: rule.systemId,
     ruleId: rule.id,
+    userId: rule.ownerId, // กฎกลาง (systemId=null) ก็ส่งให้เจ้าของกฎ ไม่ใช่ user คนแรก
     type: rule.type,
     title: rule.title,
     detail: rule.payload ? `รายละเอียดเพิ่มเติม: ${JSON.stringify(rule.payload)}` : null,
@@ -131,9 +140,10 @@ export async function closeTaskByRecord(
 }
 
 /** เปลี่ยนสถานะงานแบบ manual (ข้าม/ยกเลิก) — ห้าม set DONE ทางนี้ (DONE ต้องมาจาก record จริง) */
-export async function updateTaskStatus(id: number, status: TaskStatus) {
+export async function updateTaskStatus(id: number, user: AuthUser, status: TaskStatus) {
   const task = await prisma.task.findUnique({ where: { id } });
   if (!task) throw notFound('ไม่พบงานนี้');
+  assertOwnership(user, task.userId);
   if (status === 'DONE') {
     throw badRequest('การปิดงาน (DONE) ต้องมาจากการบันทึกข้อมูลจริง หรือกดปุ่ม "ทำเสร็จแล้ว" (สำหรับงานตามรอบ)');
   }
@@ -150,9 +160,10 @@ export async function updateTaskStatus(id: number, status: TaskStatus) {
 const RECORD_CLOSED_TYPES: ReminderType[] = ['WATER_TEST', 'DOSING', 'RESTOCK'];
 
 /** ปิดงานตามรอบแบบ manual ("ทำเสร็จแล้ว") — เฉพาะงานเตือนเฉยๆ ที่ไม่มี record มาปิด */
-export async function completeTaskManually(id: number) {
+export async function completeTaskManually(id: number, user: AuthUser) {
   const task = await prisma.task.findUnique({ where: { id } });
   if (!task) throw notFound('ไม่พบงานนี้');
+  assertOwnership(user, task.userId);
   if (RECORD_CLOSED_TYPES.includes(task.type)) {
     throw badRequest(
       'งานนี้ปิดได้จากการบันทึกข้อมูลจริง (วัดน้ำ/ปรุงน้ำ/เติมของในคลัง) ไม่ใช่กดทำเสร็จมือเปล่า',

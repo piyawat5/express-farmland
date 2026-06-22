@@ -44,7 +44,7 @@ contactRouter.get(
   validate({ query: contactQuery }),
   asyncHandler(async (req, res) => {
     const { type, isRegular, active } = req.query as z.infer<typeof contactQuery>;
-    res.json(serialize(await contactSvc.listContacts({ type, isRegular, active })));
+    res.json(serialize(await contactSvc.listContacts(req.user!, { type, isRegular, active })));
   }),
 );
 
@@ -52,7 +52,7 @@ contactRouter.post(
   '/',
   validate({ body: contactBody }),
   asyncHandler(async (req, res) => {
-    res.status(201).json(serialize(await contactSvc.createContact(req.body)));
+    res.status(201).json(serialize(await contactSvc.createContact(req.user!, req.body)));
   }),
 );
 
@@ -60,7 +60,7 @@ contactRouter.get(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await contactSvc.getContact(Number(req.params.id))));
+    res.json(serialize(await contactSvc.getContact(Number(req.params.id), req.user!)));
   }),
 );
 
@@ -68,7 +68,7 @@ contactRouter.patch(
   '/:id',
   validate({ params: idParam, body: contactBody.partial() }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await contactSvc.updateContact(Number(req.params.id), req.body)));
+    res.json(serialize(await contactSvc.updateContact(Number(req.params.id), req.user!, req.body)));
   }),
 );
 
@@ -76,7 +76,7 @@ contactRouter.delete(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    await contactSvc.deleteContact(Number(req.params.id));
+    await contactSvc.deleteContact(Number(req.params.id), req.user!);
     res.status(204).end();
   }),
 );
@@ -118,7 +118,7 @@ transactionRouter.get(
   validate({ query: txnQuery }),
   asyncHandler(async (req, res) => {
     const { contactId, kind, status, crabId } = req.query as z.infer<typeof txnQuery>;
-    res.json(serialize(await txnSvc.listTransactions({ contactId, kind, status, crabId })));
+    res.json(serialize(await txnSvc.listTransactions(req.user!, { contactId, kind, status, crabId })));
   }),
 );
 
@@ -127,7 +127,7 @@ transactionRouter.post(
   '/preview',
   validate({ body: txnPreviewBody }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await txnSvc.previewFinancials(req.body)));
+    res.json(serialize(await txnSvc.previewFinancials(req.user!, req.body)));
   }),
 );
 
@@ -135,7 +135,7 @@ transactionRouter.post(
   '/',
   validate({ body: txnBody }),
   asyncHandler(async (req, res) => {
-    res.status(201).json(serialize(await txnSvc.createTransaction(req.body)));
+    res.status(201).json(serialize(await txnSvc.createTransaction(req.user!, req.body)));
   }),
 );
 
@@ -143,7 +143,7 @@ transactionRouter.get(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await txnSvc.getTransaction(Number(req.params.id))));
+    res.json(serialize(await txnSvc.getTransaction(Number(req.params.id), req.user!)));
   }),
 );
 
@@ -151,7 +151,7 @@ transactionRouter.patch(
   '/:id',
   validate({ params: idParam, body: txnBody.partial() }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await txnSvc.updateTransaction(Number(req.params.id), req.body)));
+    res.json(serialize(await txnSvc.updateTransaction(Number(req.params.id), req.user!, req.body)));
   }),
 );
 
@@ -159,7 +159,7 @@ transactionRouter.delete(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    await txnSvc.deleteTransaction(Number(req.params.id));
+    await txnSvc.deleteTransaction(Number(req.params.id), req.user!);
     res.status(204).end();
   }),
 );
@@ -200,7 +200,7 @@ outreachRouter.get(
   validate({ query: outreachQuery }),
   asyncHandler(async (req, res) => {
     const { round, kind, status, contactId } = req.query as z.infer<typeof outreachQuery>;
-    res.json(serialize(await outreachSvc.listOutreach({ round, kind, status, contactId })));
+    res.json(serialize(await outreachSvc.listOutreach(req.user!, { round, kind, status, contactId })));
   }),
 );
 
@@ -209,7 +209,7 @@ outreachRouter.post(
   '/start-round',
   validate({ body: startRoundBody }),
   asyncHandler(async (req, res) => {
-    res.status(201).json(serialize(await outreachSvc.startRound(req.body)));
+    res.status(201).json(serialize(await outreachSvc.startRound(req.user!, req.body)));
   }),
 );
 
@@ -217,7 +217,7 @@ outreachRouter.post(
   '/',
   validate({ body: outreachBody }),
   asyncHandler(async (req, res) => {
-    res.status(201).json(serialize(await outreachSvc.createOutreach(req.body)));
+    res.status(201).json(serialize(await outreachSvc.createOutreach(req.user!, req.body)));
   }),
 );
 
@@ -225,7 +225,7 @@ outreachRouter.patch(
   '/:id',
   validate({ params: idParam, body: outreachPatchBody }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await outreachSvc.updateOutreach(Number(req.params.id), req.body)));
+    res.json(serialize(await outreachSvc.updateOutreach(Number(req.params.id), req.user!, req.body)));
   }),
 );
 
@@ -233,7 +233,7 @@ outreachRouter.delete(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    await outreachSvc.deleteOutreach(Number(req.params.id));
+    await outreachSvc.deleteOutreach(Number(req.params.id), req.user!);
     res.status(204).end();
   }),
 );

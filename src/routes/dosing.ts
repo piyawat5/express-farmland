@@ -4,6 +4,12 @@ import { asyncHandler } from '../lib/http';
 import { validate } from '../middleware/validate';
 import { serialize } from '../lib/serialize';
 import { idParam } from '../lib/validation';
+import {
+  requireSystemEdit,
+  systemIdFromParam,
+  systemIdFromDosingCalibration,
+  requireDosingRuleEdit,
+} from '../middleware/auth';
 import * as svc from '../services/dosing.service';
 
 // ════════════════════════════════════════════════════════════════════
@@ -60,7 +66,7 @@ substanceRouter.get(
   validate({ query: listSubstanceQuery }),
   asyncHandler(async (req, res) => {
     const { all } = req.query as z.infer<typeof listSubstanceQuery>;
-    res.json(serialize(await svc.listSubstances(all === true)));
+    res.json(serialize(await svc.listSubstances(req.user!, all === true)));
   }),
 );
 
@@ -68,7 +74,7 @@ substanceRouter.post(
   '/',
   validate({ body: substanceBody }),
   asyncHandler(async (req, res) => {
-    res.status(201).json(serialize(await svc.createSubstance(req.body)));
+    res.status(201).json(serialize(await svc.createSubstance(req.user!, req.body)));
   }),
 );
 
@@ -76,7 +82,7 @@ substanceRouter.get(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await svc.getSubstance(Number(req.params.id))));
+    res.json(serialize(await svc.getSubstance(Number(req.params.id), req.user!)));
   }),
 );
 
@@ -84,7 +90,7 @@ substanceRouter.patch(
   '/:id',
   validate({ params: idParam, body: substanceBody.partial() }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await svc.updateSubstance(Number(req.params.id), req.body)));
+    res.json(serialize(await svc.updateSubstance(Number(req.params.id), req.user!, req.body)));
   }),
 );
 
@@ -92,7 +98,7 @@ substanceRouter.delete(
   '/:id',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    await svc.deleteSubstance(Number(req.params.id));
+    await svc.deleteSubstance(Number(req.params.id), req.user!);
     res.status(204).end();
   }),
 );
@@ -104,7 +110,7 @@ dosingSystemRouter.get(
   '/:id/dosing-calibrations',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await svc.listCalibrations(Number(req.params.id))));
+    res.json(serialize(await svc.listCalibrations(Number(req.params.id), req.user!)));
   }),
 );
 
@@ -112,6 +118,7 @@ dosingSystemRouter.get(
 dosingSystemRouter.put(
   '/:id/dosing-calibrations',
   validate({ params: idParam, body: calibrationBody }),
+  requireSystemEdit(systemIdFromParam()),
   asyncHandler(async (req, res) => {
     res.json(serialize(await svc.upsertCalibration(Number(req.params.id), req.body)));
   }),
@@ -121,16 +128,17 @@ dosingSystemRouter.get(
   '/:id/dosing-rules',
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await svc.listRules(Number(req.params.id))));
+    res.json(serialize(await svc.listRules(req.user!, Number(req.params.id))));
   }),
 );
 
 dosingSystemRouter.post(
   '/:id/dosing-rules',
   validate({ params: idParam, body: ruleBody.omit({ systemId: true }) }),
+  requireSystemEdit(systemIdFromParam()),
   asyncHandler(async (req, res) => {
     res.status(201).json(
-      serialize(await svc.createRule({ ...req.body, systemId: Number(req.params.id) })),
+      serialize(await svc.createRule(req.user!, { ...req.body, systemId: Number(req.params.id) })),
     );
   }),
 );
@@ -141,6 +149,7 @@ export const calibrationRouter = Router();
 calibrationRouter.delete(
   '/:id',
   validate({ params: idParam }),
+  requireSystemEdit(systemIdFromDosingCalibration),
   asyncHandler(async (req, res) => {
     await svc.deleteCalibration(Number(req.params.id));
     res.status(204).end();
@@ -155,13 +164,14 @@ ruleRouter.post(
   '/',
   validate({ body: ruleBody }),
   asyncHandler(async (req, res) => {
-    res.status(201).json(serialize(await svc.createRule(req.body)));
+    res.status(201).json(serialize(await svc.createRule(req.user!, req.body)));
   }),
 );
 
 ruleRouter.patch(
   '/:id',
   validate({ params: idParam, body: ruleBody.partial() }),
+  requireDosingRuleEdit,
   asyncHandler(async (req, res) => {
     res.json(serialize(await svc.updateRule(Number(req.params.id), req.body)));
   }),
@@ -170,6 +180,7 @@ ruleRouter.patch(
 ruleRouter.delete(
   '/:id',
   validate({ params: idParam }),
+  requireDosingRuleEdit,
   asyncHandler(async (req, res) => {
     await svc.deleteRule(Number(req.params.id));
     res.status(204).end();
