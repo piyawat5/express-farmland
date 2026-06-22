@@ -31,7 +31,7 @@ const systemBody = z.object({
 
 const boxBody = z.object({
   code: z.string().min(1),
-  label: z.string().optional(),
+  label: z.string().nullable().optional(),
   status: z.enum(['EMPTY', 'OCCUPIED']).optional(),
   note: z.string().optional(),
 });
