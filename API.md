@@ -98,7 +98,9 @@
 
 - `status`: `FATTENING` · `READY` · `SOLD` · `DEAD`
 - `type`: `MEAT` · `EGG` · `UNKNOWN`
-- **Body:** `{ systemId*, code?, boxId?, cableTieColor?, type?, sourceSellerId?, buyerId?, lockedForBuyerId?, purchasePrice?, purchaseDate?, weightG?, startFirmnessPct?(0-100), currentFirmnessPct?(0-100), readyAt?, sellPrice?, sellDate?, status?, round?, note? }`
+- `sex`: `MALE` (ผู้) · `INTERSEX` (กะเทย) · `FEMALE` (เมีย) · `UNKNOWN` — default `UNKNOWN`
+- `grade`: `A` (สมบูรณ์) · `B` (ไม่สมบูรณ์) · `null`
+- **Body:** `{ systemId*, code?, boxId?, cableTieColor?, type?, sex?, grade?, sourceSellerId?, buyerId?, lockedForBuyerId?, purchasePrice?, purchaseDate?, weightG?, startFirmnessPct?(0-100), currentFirmnessPct?(0-100), readyAt?, sellPrice?, sellDate?, status?, round?, note? }`
 - `cableTieColor` = สีเคเบิ้ลไทล์รัดกล้าม (hex/ชื่อสี) — **1 กล่องใส่ปูได้หลายตัว** ใช้สีแยกว่าตัวไหนเป็นตัวไหน (ข้อ 2.2)
 - `currentFirmnessPct` = %ความแน่นเนื้อ (MEAT) หรือ **%ไข่ (EGG)** — frontend โชว์บนกล่อง (ข้อ 3)
 - **gotcha:** ผูกปูเข้ากล่อง (`boxId`) → backend sync `CrabBox.status` (มีปูเป็นๆ ≥1 = OCCUPIED); **ไม่กันจำนวนปูต่อกล่องแล้ว** (เดิมกัน 1 ตัว/กล่อง)

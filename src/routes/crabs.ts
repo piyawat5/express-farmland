@@ -12,6 +12,8 @@ import * as svc from '../services/crab.service';
 // ════════════════════════════════════════════════════════════════════
 
 const crabType = z.enum(['MEAT', 'EGG', 'UNKNOWN']);
+const crabSex = z.enum(['MALE', 'INTERSEX', 'FEMALE', 'UNKNOWN']);
+const crabGrade = z.enum(['A', 'B']);
 const crabStatus = z.enum(['FATTENING', 'READY', 'SOLD', 'DEAD']);
 
 const crabBody = z.object({
@@ -20,6 +22,8 @@ const crabBody = z.object({
   boxId: z.number().int().positive().nullable().optional(),
   cableTieColor: z.string().max(32).nullable().optional(), // สีเคเบิ้ลไทล์ (ข้อ 2.2)
   type: crabType.optional(),
+  sex: crabSex.optional(),
+  grade: crabGrade.nullable().optional(),
   sourceSellerId: z.number().int().positive().nullable().optional(),
   buyerId: z.number().int().positive().nullable().optional(),
   lockedForBuyerId: z.number().int().positive().nullable().optional(),

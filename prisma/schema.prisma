@@ -172,6 +172,8 @@ model Crab {
   // เคเบิ้ลไทล์รัดกล้ามแยกตัว — 1 กล่องมีปูได้หลายตัว ใช้สีแยกว่าตัวไหนเป็นตัวไหน (ข้อ 2.2)
   cableTieColor String? // hex หรือชื่อสี เช่น "#e53935" / "red"
   type     CrabType   @default(UNKNOWN) // ขุนเนื้อ หรือ ขุนไข่
+  sex      CrabSex    @default(UNKNOWN) // เพศ: ผู้ / กะเทย / เมีย
+  grade    CrabGrade? // เกรด: A สมบูรณ์ / B ไม่สมบูรณ์
 
   // ที่มา / ปลายทาง
   sourceSeller     Contact? @relation("CrabSeller", fields: [sourceSellerId], references: [id])
@@ -206,6 +208,18 @@ enum CrabType {
   MEAT // ขุนเนื้อ
   EGG // ขุนไข่
   UNKNOWN
+}
+
+enum CrabSex {
+  MALE // ผู้
+  INTERSEX // กะเทย
+  FEMALE // เมีย
+  UNKNOWN
+}
+
+enum CrabGrade {
+  A // สมบูรณ์
+  B // ไม่สมบูรณ์
 }
 
 enum CrabStatus {
