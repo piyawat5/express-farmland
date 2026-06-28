@@ -12,7 +12,7 @@ import { isAdmin, ownerWhere, ownedSystemIds, assertOwnership } from '../lib/sco
 // เช่น เบกกิ้งโซดา 1 ช้อนแกง → alkalinity +2.5 หยด
 
 /** map WaterParam → ชื่อ field ใน WaterTest (ใช้ทั้งตอน evaluate) */
-const PARAM_FIELD = {
+export const PARAM_FIELD = {
   PH: 'ph',
   ALKALINITY: 'alkalinity',
   MAGNESIUM: 'magnesium',
@@ -39,6 +39,7 @@ export type DosingRecommendation = {
   dose?: number; // จำนวนสารที่แนะนำให้เติม
   doseUnit?: string;
   message?: string;
+  stale?: boolean; // ค่านี้ยกมาจากรอบก่อน (รอบล่าสุดไม่ได้วัด) — ข้อ 2.1
 };
 
 const dec = (v: Prisma.Decimal | number | null | undefined): number | null =>

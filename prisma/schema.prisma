@@ -28,6 +28,7 @@ model User {
   passwordHash  String? // bcrypt hash — null ได้ (กรณี login ผ่าน OAuth อย่างเดียว)
   role          Role     @default(FARM_OWNER) // admin = ทำได้ทุกอย่าง, farm owner = แก้ได้แค่ของตัวเอง
   lineId        String? // เผื่อ Line ในอนาคต
+  avatarUrl     String?  @db.Text // รูปโปรไฟล์จาก OAuth (Google/Line) — ข้อ 4.5
   notifyByEmail Boolean  @default(true)
   active        Boolean  @default(true)
   createdAt     DateTime @default(now())
@@ -129,6 +130,7 @@ model CrabBox {
   systemId  Int
   code      String // เช่น "A1"
   label     String?
+  color     String? // สีพื้นกล่อง (hex) ปรับเองได้ (ข้อ 1.11)
   status    BoxStatus  @default(EMPTY)
   note      String?
   createdAt DateTime   @default(now())

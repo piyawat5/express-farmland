@@ -243,6 +243,32 @@ prisma/schema.prisma
 > ค่าตัวเลขจริง (min/max, ปริมาณสาร, รอบวัน) ให้ถามผู้ใช้ตอนทำ seed เพราะผู้ใช้ custom เอง
 
 ## Log การเปลี่ยนแปลง
+- **2026-06-28** — **เริ่มรอบปรับ UI/บั๊กตามฟีดแบ็คผู้ใช้ (5 ส่วน: หน้าปู / น้ำ / คู่ค้า-ขายปู / layout-ธีม / ปฏิทิน)** ทำเรียงตามลำดับ. **เฟส 1 (หน้าปู) เสร็จ — typecheck ผ่านทั้ง BE+FE:**
+  - **`CrabsView.vue` รื้อใหญ่:** รวม dialog ปูเป็น **แท็บ (1 ตัว/แท็บ)** คลิกกล่อง→เข้ารายละเอียดทันที (ตัด chooser), ปุ่ม **บันทึกร่วม freeze ล่างสุด** (บันทึกทุกแท็บ), ปุ่มลบปูในแท็บ, **fullscreen บนมือถือ** (`useDisplay().mobile` แก้ scroll ค้าง ข้อ 1.1), จัดโซนฟอร์มใหม่ (น้ำหนัก+%ไข่ ก่อนราคา), `clearable` วันที่ (ข้อ 1.6.5), **ขุนเนื้อ→เพศผู้ / ขุนไข่→เพศเมีย อัตโนมัติ** (`applyTypeSex`), ตัดราคาขาย/วันที่ขาย/สถานะ SOLD ออกจากในกล่อง (ข้อ 3.5)
+  - **confirm dialog ในแอป** แทน `window.confirm` (มือถือกดลบปูได้ ข้อ 1.9); **chip กรอง** ไข่/เนื้อ/พร้อมขาย (1.4); ย้าย legend ไปปุ่ม ⓘ (1.2); ขยายกล่อง 108px แก้ %ไข่ถูกตัด (1.3); ปุ่มรับล็อตสีเด่น (1.5)
+  - **รับปูเข้าล็อต:** ระบุ**จำนวนปูต่อกล่อง** + **น้ำหนักรายตัว (บังคับกรอก)** กระจายต้นทุนตามน้ำหนัก (ข้อ 1.8, 1.10)
+  - **backend `crab.service`:** auto-code ไม่ซ้ำในระบบ (`uniqueCodeInSystem` → 1A1, 1A1-2, …) ข้อ 1.6.7
+  - **migration `phase13_box_color` (ข้อ 1.11):** เพิ่ม `CrabBox.color String?` (สีพื้นกล่อง) + zod `boxBody.color` + FE color picker ในหัว dialog + ทาสีกล่อง. ⚠️ **ยังไม่ apply ลง DB** — ผู้ใช้จะรัน `npx prisma migrate deploy` เอง (คอลัมน์ nullable เพิ่มอย่างเดียว ปลอดภัย); regenerate client แล้ว
+  - migration `phase13_box_color` **apply ลง DB จริงแล้ว** (2026-06-28)
+- **2026-06-28 (เฟส 2 — น้ำ)** เสร็จ + typecheck ผ่าน:
+  - **ข้อ 2.2:** `waterTestBody.note` เปลี่ยน `z.string().optional()` → `.nullable().optional()` — เดิม FE ส่ง `note:null` ตอนเว้นว่าง แต่ zod ไม่รับ null → ดูเหมือน "required" (จริงๆ คือ validation fail)
+  - **ข้อ 2.1 (ค่าที่ลืมวัดรอบนี้ห้ามถือว่าผ่าน):** `water.service.mergedLatestValues()` รวมค่าจากประวัติ (take 30) → แต่ละพารามิเตอร์ยกค่ารอบล่าสุดที่ "วัดจริง" (ไม่ null); `createWaterTest` ประเมินจากค่า merged แทนเฉพาะ test ใหม่ → Mg ที่ลืมวัดรอบ 2 แต่รอบ 1 หลุดเกณฑ์ยังถูกเตือน + **ไม่ปิด DOSING task ผิดๆ**; เพิ่ม `stale?:boolean` ใน `DosingRecommendation` (export `PARAM_FIELD` จาก dosing.service). FE: `WaterView` + banner ใน `CrabsView` ใช้ค่า merged + ป้าย "ค่าเดิม ยังไม่วัดรอบนี้" (`mdi-history`)
+- **2026-06-28 (เฟส 3 — คู่ค้า & ขายปู)** เสร็จ + typecheck ผ่าน (`CommerceView.vue` รื้อ, FE-only ไม่แตะ schema):
+  - **3.4:** เอาปุ่ม "รายการซื้อขายใหม่" + dialog manual txn ออก (ลบโค้ดที่ไม่ใช้); เปลี่ยน "ขายยกล็อต"→**"ขายปู"**; **4.4** เปลี่ยนชื่อเมนู `CommerceView` meta.title → "คู่ค้า & ขายปู"
+  - **3.1:** ตาราง candidate ในไดอะล็อกขายปูเพิ่ม **จุดสีเคเบิ้ลไทล์** + คอลัมน์ **ชนิด** + **ความแน่น/ไข่ %** (1 กล่องมีหลายตัว)
+  - **3.2:** เพิ่มโหมด **"ตามสเปกลูกค้า"** (mode='spec'): กรอกจำนวนปูไข่/ปูเนื้อ + %ไข่ขั้นต่ำ → `autoPick` เลือกให้; `specShortfall` เตือนขาดแยกชนิด เช่น "ขาดปูเนื้อ (ตัวผู้) อีก 1 ตัว"
+  - **3.3:** ปุ่ม **"ใบเสนอราคา"** ข้างปุ่มยืนยันขาย → `buildDocHtml('quotation')` + `printHtml` (เปิดหน้าต่างใหม่ พิมพ์ผ่านเบราว์เซอร์ — รองรับฟอนต์ไทย, **ไม่โชว์ต้นทุน/กำไร**); เอกสารมี header/ลูกค้า/ตารางปู/สรุปไข่-เนื้อ/ยอดรวม
+  - **3.6:** ขาย DONE → ฝัง id ปูใน `transaction.note` เป็น `#1,2,3` → ปุ่ม 📄 ใน listing เปิดใบเสร็จ/ใบเสนอราคาย้อนหลัง (`openTxnDoc` parse id → map จาก `crabs` ที่โหลดมา รวม SOLD)
+  - **gotcha:** receipt reconstruct จาก marker `#id,...` ใน note (ไม่เพิ่ม schema); ถ้าปูถูกลบภายหลัง = ข้ามรายการนั้น
+- **2026-06-28 (เฟส 4 — layout/ธีม/เมนู)** เสร็จ + typecheck ผ่าน:
+  - **4.5 (รูปโปรไฟล์ไลน์/กูเกิล):** migration `phase14_user_avatar` (`User.avatarUrl String? @db.Text`) **apply ลง DB จริงแล้ว**; `oauth.service` ดึง picture (Google `userinfo.picture`, LINE id_token `picture`/profile `pictureUrl`) → เก็บ/อัปเดตตอน callback; `auth.service.publicUser` คืน `avatarUrl`; FE `AuthUser.avatarUrl` + แสดงใน `App.vue`
+  - **4.1:** เมนูจัดกลุ่ม (router meta `group`: overview/care/stock/commerce) → ภาพรวม / การเลี้ยงปู / คลัง&สูตร / การเงิน&ซื้อขาย(ล่างสุด)
+  - **4.3:** dark/light toggle ขวาบน (`useTheme` + localStorage 'theme'); `vuetify.ts` เพิ่ม theme dark
+  - **4.8** ฟอนต์ IBM Plex Sans Thai + Inter (`styles/global.css`); **4.7** โลโก้ปู 🦀 ที่ title; **4.6** บีบ system dropdown; **4.2** polish
+- **2026-06-28 (เฟส 5 — ปฏิทิน)** เสร็จ + production build ผ่าน:
+  - `npm i @fullcalendar/{core,vue3,daygrid,list,interaction}` (v6); `CalendarView.vue` + route `/calendar` (group overview, ข้อ 5.1); แสดง Task (dueAt, สีตามสถานะ) + nextRunAt ของ ReminderRule ("กำหนดถัดไป"); locale ไทย; คลิก→ไป tasks/reminders
+  - **🎉 ครบทั้ง 5 เฟสรอบฟีดแบ็ค** (typecheck + build เขียวหมด) — เหลือผู้ใช้ทดสอบจริง
+  - **ค้าง (ออปชัน):** ปฏิทินโชว์แค่ "กำหนดถัดไป" ของกฎ (ไม่ project cron หลาย occurrence)
 - **2026-06-22** — **แยกข้อมูลขาดต่อ user ทุกโมดูล (per-user isolation)** แผน `velvety-plotting-shannon.md`:
   - เปลี่ยนโมเดลสิทธิ์จาก "shared read, owned write" → **เห็น/แก้ได้เฉพาะของตัวเอง**; **ADMIN = god mode** (เห็น/แก้ทุกคน)
   - **migration `phase11_user_isolation`** (apply + backfill ลง DB จริงแล้ว): เพิ่ม `ownerId Int?` (FK User) ใน `Contact`/`Substance`/`InventoryItem`/`DosingRule`/`ReminderRule`/`LedgerEntry` + `@@index([ownerId])`; **`Substance` unique เปลี่ยน `name` → `[ownerId, name]`** (คลังสารแยกต่อ user); backfill ข้อมูลเดิมทั้งหมดยกให้ jame (id 1)

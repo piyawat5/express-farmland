@@ -52,19 +52,38 @@ async function assertBoxInSystem(tx: Prisma.TransactionClient, systemId: number,
   if (box.systemId !== systemId) throw badRequest('กล่องนี้ไม่ได้อยู่ในระบบเดียวกับปู');
 }
 
+/**
+ * หา code ที่ไม่ซ้ำในระบบเดียวกัน โดยต่อท้าย -2, -3, ... (ข้อ 1.6.7)
+ * จำเป็นเพราะ 1 กล่องมีปูได้หลายตัว → default code (ชื่อระบบ+กล่อง) จะชนกันเอง
+ */
+async function uniqueCodeInSystem(
+  tx: Prisma.TransactionClient,
+  systemId: number,
+  base: string,
+): Promise<string> {
+  for (let n = 1; ; n++) {
+    const candidate = n === 1 ? base : `${base}-${n}`;
+    const clash = await tx.crab.count({ where: { systemId, code: candidate } });
+    if (clash === 0) return candidate;
+  }
+}
+
 export function createCrab(data: Prisma.CrabUncheckedCreateInput) {
   return prisma.$transaction(async (tx) => {
     if (data.boxId != null) {
       await assertBoxInSystem(tx, data.systemId, data.boxId);
     }
     // ถ้าไม่ระบุรหัสปู → default = ชื่อระบบ + รหัสกล่อง (เช่นระบบ "1" กล่อง A1 → "1A1")
-    // กัน code ซ้ำข้ามระบบ เพราะนำชื่อระบบมานำหน้า
+    // 1 กล่องมีปูได้หลายตัว → ต่อท้ายลำดับให้ไม่ซ้ำกัน (ข้อ 1.6.7) เช่น 1A1, 1A1-2, 1A1-3
     if ((data.code == null || data.code === '') && data.boxId != null) {
       const [system, box] = await Promise.all([
         tx.crabSystem.findUnique({ where: { id: data.systemId }, select: { name: true } }),
         tx.crabBox.findUnique({ where: { id: data.boxId }, select: { code: true } }),
       ]);
-      if (system && box) data.code = `${system.name}${box.code}`;
+      if (system && box) {
+        const base = `${system.name}${box.code}`;
+        data.code = await uniqueCodeInSystem(tx, data.systemId, base);
+      }
     }
     const crab = await tx.crab.create({ data });
     if (crab.boxId != null) {

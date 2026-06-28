@@ -34,7 +34,7 @@ const waterValues = z.object({
 
 const waterTestBody = waterValues.extend({
   testedAt: z.coerce.date().default(() => new Date()),
-  note: z.string().optional(),
+  note: z.string().nullable().optional(), // ข้อ 2.2: หมายเหตุไม่บังคับ (รับ null ได้)
 });
 
 const waterTargetBody = z.object({

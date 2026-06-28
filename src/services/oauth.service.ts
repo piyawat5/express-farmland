@@ -78,7 +78,12 @@ export function getAuthorizeUrl(provider: string): string {
   return `https://access.line.me/oauth2/v2.1/authorize?${params.toString()}`;
 }
 
-type Profile = { providerAccountId: string; email: string | null; name: string | null };
+type Profile = {
+  providerAccountId: string;
+  email: string | null;
+  name: string | null;
+  avatarUrl: string | null;
+};
 
 async function googleProfile(code: string): Promise<Profile> {
   const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
@@ -100,8 +105,13 @@ async function googleProfile(code: string): Promise<Profile> {
     headers: { Authorization: `Bearer ${token.access_token}` },
   });
   if (!infoRes.ok) throw new AppError(401, 'ดึงโปรไฟล์ Google ไม่สำเร็จ');
-  const info = (await infoRes.json()) as { id: string; email?: string; name?: string };
-  return { providerAccountId: info.id, email: info.email ?? null, name: info.name ?? null };
+  const info = (await infoRes.json()) as { id: string; email?: string; name?: string; picture?: string };
+  return {
+    providerAccountId: info.id,
+    email: info.email ?? null,
+    name: info.name ?? null,
+    avatarUrl: info.picture ?? null,
+  };
 }
 
 async function lineProfile(code: string): Promise<Profile> {
@@ -126,8 +136,13 @@ async function lineProfile(code: string): Promise<Profile> {
         algorithms: ['HS256'],
         audience: env.LINE_CHANNEL_ID,
         issuer: 'https://access.line.me',
-      }) as unknown as { sub: string; email?: string; name?: string };
-      return { providerAccountId: payload.sub, email: payload.email ?? null, name: payload.name ?? null };
+      }) as unknown as { sub: string; email?: string; name?: string; picture?: string };
+      return {
+        providerAccountId: payload.sub,
+        email: payload.email ?? null,
+        name: payload.name ?? null,
+        avatarUrl: payload.picture ?? null,
+      };
     } catch {
       // verify id_token ไม่ผ่าน → fallback ไปดึง profile (จะไม่มี email)
     }
@@ -138,8 +153,13 @@ async function lineProfile(code: string): Promise<Profile> {
     headers: { Authorization: `Bearer ${token.access_token}` },
   });
   if (!profRes.ok) throw new AppError(401, 'ดึงโปรไฟล์ LINE ไม่สำเร็จ');
-  const prof = (await profRes.json()) as { userId: string; displayName?: string };
-  return { providerAccountId: prof.userId, email: null, name: prof.displayName ?? null };
+  const prof = (await profRes.json()) as { userId: string; displayName?: string; pictureUrl?: string };
+  return {
+    providerAccountId: prof.userId,
+    email: null,
+    name: prof.displayName ?? null,
+    avatarUrl: prof.pictureUrl ?? null,
+  };
 }
 
 /** แลก code → โปรไฟล์ → หา/สร้าง user → ออก token (rotate-able) */
@@ -164,6 +184,10 @@ export async function handleCallback(
   });
   if (existing) {
     if (!existing.user.active) throw new AppError(403, 'บัญชีถูกปิดใช้งาน');
+    // อัปเดตรูปโปรไฟล์ล่าสุดจาก provider (ข้อ 4.5)
+    if (profile.avatarUrl && profile.avatarUrl !== existing.user.avatarUrl) {
+      await prisma.user.update({ where: { id: existing.user.id }, data: { avatarUrl: profile.avatarUrl } });
+    }
     return issueTokens(existing.user, userAgent);
   }
 
@@ -179,8 +203,11 @@ export async function handleCallback(
         role: 'FARM_OWNER',
         passwordHash: null,
         lineId: key === 'line' ? profile.providerAccountId : null,
+        avatarUrl: profile.avatarUrl,
       },
     });
+  } else if (profile.avatarUrl && profile.avatarUrl !== user.avatarUrl) {
+    user = await prisma.user.update({ where: { id: user.id }, data: { avatarUrl: profile.avatarUrl } });
   }
   await prisma.oAuthAccount.create({
     data: { userId: user.id, provider: enumVal, providerAccountId: profile.providerAccountId },

@@ -32,6 +32,7 @@ const systemBody = z.object({
 const boxBody = z.object({
   code: z.string().min(1),
   label: z.string().nullable().optional(),
+  color: z.string().max(32).nullable().optional(), // สีพื้นกล่อง (ข้อ 1.11)
   status: z.enum(['EMPTY', 'OCCUPIED']).optional(),
   note: z.string().optional(),
 });

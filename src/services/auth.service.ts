@@ -71,11 +71,18 @@ export async function issueTokens(
   return { accessToken, refreshToken, user: authUser };
 }
 
-const publicUser = (u: { id: number; email: string; name: string | null; role: Role }) => ({
+const publicUser = (u: {
+  id: number;
+  email: string;
+  name: string | null;
+  role: Role;
+  avatarUrl?: string | null;
+}) => ({
   id: u.id,
   email: u.email,
   name: u.name,
   role: u.role,
+  avatarUrl: u.avatarUrl ?? null,
 });
 
 // ── register (email + password) ───────────────────────────────────────

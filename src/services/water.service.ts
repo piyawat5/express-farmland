@@ -1,7 +1,7 @@
 import { Prisma, WaterParam } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { notFound } from '../lib/http';
-import { evaluateWaterValues, type DosingRecommendation, type WaterValues } from './dosing.service';
+import { evaluateWaterValues, PARAM_FIELD, type DosingRecommendation, type WaterValues } from './dosing.service';
 import { closeTaskByRecord, createTask, findOpenTask } from './task.service';
 import type { AuthUser } from './auth.service';
 import { assertOwnership } from '../lib/scope';
@@ -74,32 +74,39 @@ export async function getWaterTest(id: number, user?: AuthUser) {
   return test;
 }
 
-/** ดึงค่าน้ำจาก record มาเป็น WaterValues สำหรับ evaluate */
-function toValues(t: {
-  ph: Prisma.Decimal | null;
-  alkalinity: Prisma.Decimal | null;
-  magnesium: Prisma.Decimal | null;
-  calcium: Prisma.Decimal | null;
-  salinity: Prisma.Decimal | null;
-  ammonia: Prisma.Decimal | null;
-  nitrite: Prisma.Decimal | null;
-}): WaterValues {
-  return {
-    ph: t.ph,
-    alkalinity: t.alkalinity,
-    magnesium: t.magnesium,
-    calcium: t.calcium,
-    salinity: t.salinity,
-    ammonia: t.ammonia,
-    nitrite: t.nitrite,
-  };
+const WATER_FIELDS = ['ph', 'alkalinity', 'magnesium', 'calcium', 'salinity', 'ammonia', 'nitrite'] as const;
+
+/**
+ * ค่าน้ำ "ปัจจุบันที่รู้ล่าสุด" (ข้อ 2.1) — รวมจากประวัติย้อนหลัง โดยแต่ละพารามิเตอร์
+ * ยกค่าจากรอบล่าสุดที่ "วัดจริง" (ไม่ null) มาใช้ ถ้ารอบล่าสุดไม่ได้วัดตัวนั้น
+ * → กันเคสลืมวัด Mg รอบ 2 แล้วระบบเข้าใจผิดว่าทุกค่าผ่าน
+ * staleFields = พารามิเตอร์ที่ "ยกค่าเดิมมา" (รอบล่าสุดไม่ได้วัด)
+ */
+async function mergedLatestValues(
+  systemId: number,
+): Promise<{ values: WaterValues; staleFields: Set<string> }> {
+  const tests = await prisma.waterTest.findMany({
+    where: { systemId },
+    orderBy: { testedAt: 'desc' },
+    take: 30,
+  });
+  const latest = tests[0];
+  const values: WaterValues = {};
+  const staleFields = new Set<string>();
+  for (const f of WATER_FIELDS) {
+    const found = tests.find((t) => t[f] != null);
+    const v = found ? found[f] : null;
+    values[f] = v;
+    if (v != null && latest && latest[f] == null) staleFields.add(f);
+  }
+  return { values, staleFields };
 }
 
 /** สรุปคำแนะนำที่ "ต้องลงมือ" เป็นข้อความ detail ของ Task ปรุงน้ำ */
 function summarizeRecommendations(recs: DosingRecommendation[]): string {
   return recs
     .map((r) => {
-      const head = `• ${r.parameter} = ${r.current} (${r.status})`;
+      const head = `• ${r.parameter} = ${r.current}${r.stale ? ' (ค่าเดิม ยังไม่วัดรอบนี้)' : ''} (${r.status})`;
       if (r.action === 'DOSE' && r.substance && r.dose != null) {
         return `${head} → เติม ${r.substance.name} ${r.dose} ${r.doseUnit ?? r.substance.unit}`;
       }
@@ -125,8 +132,12 @@ export async function createWaterTest(data: Prisma.WaterTestUncheckedCreateInput
     await prisma.waterTest.update({ where: { id: waterTest.id }, data: { taskId: openTask.id } });
   }
 
-  // 2) ประเมินค่า
-  const recommendations = await evaluateWaterValues(waterTest.systemId, toValues(waterTest));
+  // 2) ประเมินค่า — ใช้ "ค่าล่าสุดที่รู้" (ยกค่าเดิมที่ยังไม่ได้วัดรอบนี้มาด้วย ข้อ 2.1)
+  const { values: merged, staleFields } = await mergedLatestValues(waterTest.systemId);
+  const recommendations = await evaluateWaterValues(waterTest.systemId, merged);
+  for (const r of recommendations) {
+    if (staleFields.has(PARAM_FIELD[r.parameter])) r.stale = true;
+  }
 
   // 3) event chain: ถ้ามีค่าหลุดเป้า → สร้าง Task ปรุงน้ำ (กันซ้ำถ้ายังมีงานปรุงน้ำค้าง)
   let dosingTaskId: number | null = null;
