@@ -243,6 +243,21 @@ prisma/schema.prisma
 > ค่าตัวเลขจริง (min/max, ปริมาณสาร, รอบวัน) ให้ถามผู้ใช้ตอนทำ seed เพราะผู้ใช้ custom เอง
 
 ## Log การเปลี่ยนแปลง
+- **2026-06-30** — **รอบฟีดแบ็คที่ 3 (8 ข้อ)** — BE typecheck + FE build ผ่าน:
+  - **#1 ไอคอน tab browser:** เปลี่ยน `public/favicon.svg` เป็นปู 🦀 (พื้นเขียว) + `index.html <title>` = "🦀 ฟาร์มปูคอนโด"; เอา avatar วงกลม 🦀 (พื้นจาง contrast ไม่พอ) ออกจาก `App.vue` nav bar → เหลือ title เรียบ
+  - **#2 chip กรองคู่ค้า:** `CommerceView` แท็บคู่ค้าเพิ่ม chip `ทั้งหมด / คนรับซื้อปูแน่น (BUYER) / ผู้ขายปูอ่อน (SELLER)` (BOTH เข้าทั้งสอง) + relabel ชนิดในตาราง/ดรอปดาวน์
+  - **#3 รูปโปรไฟล์ LINE = null:** *ไม่ใช่บั๊กโค้ด* — user id 5 (LINE) ถูกสร้างก่อนฟีเจอร์ avatar (phase14, 2026-06-28) และยังไม่ได้ล็อกอินใหม่ → DB เก็บ avatarUrl=null; `oauth.service` ดึง picture จาก id_token/`/v2/profile` อยู่แล้ว → **แก้ด้วยการ logout แล้ว login LINE ใหม่** (ต้อง deploy backend ที่มี avatar code ด้วย) — email เป็น `@oauth.local` เพราะ LINE ยังไม่เปิดสิทธิ์ Email (แยกจาก picture)
+  - **#4 cron "3 วันเว้น 1":** standard cron ทำไม่ได้ (period 4 ไม่ลงตัวกับเดือน, `*/4` รีเซ็ตทุกต้นเดือน) → **แนะนำ 3 กฎ INTERVAL_DAYS=4** เริ่มเหลื่อมวันละ 1 (วันนี้/พรุ่งนี้/มะรืน) = ฟีด 3 เว้น 1 แบบ rolling จริง
+  - **#5 ปฏิทินคลิก event → popup:** `CalendarView` เพิ่ม dialog รายละเอียด (Task: ประเภท/สถานะ/ครบกำหนด/เตือนแล้ว · Rule: กำหนดถัดไป) + ปุ่มไปหน้าจัดการ (แทนการ route ทันที); เก็บ object ใน `extendedProps`
+  - **#6 DOSING ตามรอบกดทำเสร็จไม่ได้:** `task.service.completeTaskManually` + FE `canComplete` — DOSING ที่ `ruleId != null` (กฎเตือนเติมสารตามรอบ ไม่มี record มาปิด) อนุญาตกด "ทำเสร็จแล้ว"; DOSING จาก event chain (ruleId=null) ยังต้องปิดด้วยวัดน้ำ
+  - **#7 popup มือถือคลิก input ค้าง/scroll ค้างหลัง blur:** ใส่ `:fullscreen="mobile"` (useDisplay) ให้ dialog ฟอร์มทุกหน้า (Commerce sell/contact, Dosing cal/rule, Inventory item/adjust, Ledger, Reminders, Substances, Water target, Crabs sys/settings) — แก้แบบเดียวกับ dialog ปู (ข้อ 1.1 เดิม)
+  - **#8 ลดโหมดขายปู:** เอา toggle `ตามจำนวนตัว/ตามน้ำหนัก/ตามสเปกลูกค้า` ออก → เหลือ toggle `ระบุเป็นจำนวนตัว / ระบุเป็นกิโล` (เดิมซ้อนใต้สเปก) เป็นระดับบนสุด; `sellForm.mode` คงที่ = 'spec'
+- **2026-06-29** — **รอบฟีดแบ็คที่ 2 (6 ข้อ หลังผู้ใช้เทสจริง)** — FE-only, build ผ่าน:
+  - **#2 แท็บปูถูกบีบครึ่งบนในมือถือ:** เอา prop `scrollable` ออกจาก dialog ปู → ใช้ flex layout เอง (`.crab-dialog-body { flex:1; min-height:0; overflow-y:auto }`, header/tabs/actions `flex:0 0 auto`, `.is-mobile` height:100%) แท็บไม่ถูกบีบแล้ว
+  - **#3 ขายตามสเปกเป็นกิโล:** เพิ่ม `specUnit: 'count'|'kg'` + toggle ในโหมดสเปก; `addByKg()` เลือกปูจนน้ำหนักถึงเป้าต่อชนิด; `specShortfall` คืน missing เป็น string (ตัว/กก.)
+  - **#4/#5 ใบเสนอราคาเป็นรูป (ไม่ใช่ปริ้น):** `npm i html2canvas`; เปลี่ยน `buildDocHtml`(เปิดหน้าต่างปริ้น) → `buildDocMarkup`(เนื้อใน) + render ผ่าน element off-screen `.farmdoc` (style แบบ **ไม่ scoped** เพราะ v-html) → `generateDoc()` ใช้ html2canvas → รูป PNG; dialog พรีวิว + ปุ่ม **ดาวน์โหลดรูป / คัดลอกรูป (ClipboardItem) / แชร์ (navigator.share files)**; ฟอนต์ไทยใช้ IBM Plex Sans Thai ที่โหลดอยู่แล้ว
+  - **#1 แจ้งเตือนเลือกวันในสัปดาห์:** RemindersView เพิ่ม pseudo-mode `'WEEKLY'` (chip เลือกวัน อา-ส + เวลา) → แปลงเป็น CRON ตอนบันทึก (`mm hh * * d,d`); `parseWeeklyCron` แปลงกลับตอน edit/แสดงผล; **backend cron matcher รองรับ dow list อยู่แล้ว ไม่ต้องแก้**
+  - **#6 (คำศัพท์):** ยืนยัน "ใบเสนอราคา" (ก่อนขาย) ถูกต้อง; หลังปิดการขายใช้ "ใบเสร็จรับเงิน" (โค้ดแยก quotation/receipt ตามสถานะ txn อยู่แล้ว)
 - **2026-06-28** — **เริ่มรอบปรับ UI/บั๊กตามฟีดแบ็คผู้ใช้ (5 ส่วน: หน้าปู / น้ำ / คู่ค้า-ขายปู / layout-ธีม / ปฏิทิน)** ทำเรียงตามลำดับ. **เฟส 1 (หน้าปู) เสร็จ — typecheck ผ่านทั้ง BE+FE:**
   - **`CrabsView.vue` รื้อใหญ่:** รวม dialog ปูเป็น **แท็บ (1 ตัว/แท็บ)** คลิกกล่อง→เข้ารายละเอียดทันที (ตัด chooser), ปุ่ม **บันทึกร่วม freeze ล่างสุด** (บันทึกทุกแท็บ), ปุ่มลบปูในแท็บ, **fullscreen บนมือถือ** (`useDisplay().mobile` แก้ scroll ค้าง ข้อ 1.1), จัดโซนฟอร์มใหม่ (น้ำหนัก+%ไข่ ก่อนราคา), `clearable` วันที่ (ข้อ 1.6.5), **ขุนเนื้อ→เพศผู้ / ขุนไข่→เพศเมีย อัตโนมัติ** (`applyTypeSex`), ตัดราคาขาย/วันที่ขาย/สถานะ SOLD ออกจากในกล่อง (ข้อ 3.5)
   - **confirm dialog ในแอป** แทน `window.confirm` (มือถือกดลบปูได้ ข้อ 1.9); **chip กรอง** ไข่/เนื้อ/พร้อมขาย (1.4); ย้าย legend ไปปุ่ม ⓘ (1.2); ขยายกล่อง 108px แก้ %ไข่ถูกตัด (1.3); ปุ่มรับล็อตสีเด่น (1.5)

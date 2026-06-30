@@ -164,7 +164,11 @@ export async function completeTaskManually(id: number, user: AuthUser) {
   const task = await prisma.task.findUnique({ where: { id } });
   if (!task) throw notFound('ไม่พบงานนี้');
   assertOwnership(user, task.userId);
-  if (RECORD_CLOSED_TYPES.includes(task.type)) {
+  // DOSING ที่มาจากกฎเตือนตามรอบ (ruleId != null เช่น "เติมแร่ธาตุทุก N วัน") เป็นงานเตือนเฉยๆ
+  // ไม่มี record (WaterTest) มาปิดให้ → อนุญาตให้กด "ทำเสร็จแล้ว" เองได้
+  // ส่วน DOSING จาก event chain (วัดน้ำแล้วค่าหลุด, ruleId == null) ยังต้องปิดด้วยการวัดน้ำรอบใหม่
+  const scheduledDosing = task.type === 'DOSING' && task.ruleId != null;
+  if (RECORD_CLOSED_TYPES.includes(task.type) && !scheduledDosing) {
     throw badRequest(
       'งานนี้ปิดได้จากการบันทึกข้อมูลจริง (วัดน้ำ/ปรุงน้ำ/เติมของในคลัง) ไม่ใช่กดทำเสร็จมือเปล่า',
     );
