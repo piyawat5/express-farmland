@@ -79,10 +79,12 @@ const ZONE_FIELDS: Record<string, (keyof Prisma.CrabUncheckedUpdateInput)[]> = {
   SOURCE: ['purchasePrice', 'purchaseDate', 'cableTieColor', 'lockedForBuyerId', 'code', 'note'],
 };
 
-/** ทำให้ค่าเทียบกันได้ (Decimal→number, Date→ms) เพื่อ diff ว่าเปลี่ยนจริงไหม */
+/** ทำให้ค่าเทียบกันได้เพื่อ diff ว่าเปลี่ยนจริงไหม
+ *  Date เทียบระดับ "วัน" (YYYY-MM-DD) เพราะ FE ส่ง date-only กลับมา (lastCheckedAt/purchaseDate)
+ *  — ถ้าเทียบ timestamp เต็มจะเห็น "เปลี่ยน" ทุกครั้ง (เวลาหาย) → บันทึกประวัติซ้ำ */
 function norm(v: unknown): unknown {
   if (v == null) return null;
-  if (v instanceof Date) return v.getTime();
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
   if (v instanceof Prisma.Decimal) return Number(v);
   return v;
 }
@@ -224,6 +226,17 @@ export function deleteCrab(id: number) {
     await tx.crab.delete({ where: { id } });
     if (crab.boxId != null) await freeBoxIfEmpty(tx, crab.boxId);
   });
+}
+
+/** ลบประวัติแยกโซน 1 รายการ (ข้อ 8 — ลบแถวซ้ำ/ผิดออกได้) */
+export async function deleteCrabHistory(id: number, user: AuthUser) {
+  const h = await prisma.crabHistory.findUnique({
+    where: { id },
+    include: { crab: { select: { system: { select: { ownerId: true } } } } },
+  });
+  if (!h) throw notFound('ไม่พบประวัตินี้');
+  assertOwnership(user, h.crab.system.ownerId);
+  await prisma.crabHistory.delete({ where: { id } });
 }
 
 /** คืนกล่องเป็น EMPTY ถ้าไม่มีปูที่ยังอยู่จริงในกล่องนั้นแล้ว */

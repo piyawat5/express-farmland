@@ -85,6 +85,16 @@ router.post(
   }),
 );
 
+// ลบประวัติแยกโซน 1 รายการ (ข้อ 8) — path 2 segment ไม่ชนกับ '/:id'
+router.delete(
+  '/history/:id',
+  validate({ params: idParam }),
+  asyncHandler(async (req, res) => {
+    await svc.deleteCrabHistory(Number(req.params.id), req.user!);
+    res.status(204).end();
+  }),
+);
+
 router.get(
   '/:id',
   validate({ params: idParam }),

@@ -98,6 +98,7 @@
 | GET | `/api/crabs/:id` | รายตัว (+`history[]` แยกโซน) |
 | PATCH | `/api/crabs/:id` | แก้ |
 | DELETE | `/api/crabs/:id` | ลบ |
+| DELETE | `/api/crabs/history/:id` | ลบประวัติแยกโซน 1 แถว (ข้อ 8) — ใช้ลบแถวซ้ำ/ผิด |
 
 - `status`: `FATTENING` · `READY` · `SOLD` · `DEAD`
 - `type`: `MEAT` · `EGG` · `UNKNOWN`
