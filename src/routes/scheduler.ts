@@ -24,6 +24,7 @@ const reminderType = z.enum([
   'FILTER_CLEAN',
   'SUBSTANCE_PREP',
   'RESTOCK',
+  'CRAB_CHECK',
   'CUSTOM',
 ]);
 const scheduleKind = z.enum(['INTERVAL_DAYS', 'INTERVAL_MONTHS', 'CRON', 'EVENT']);

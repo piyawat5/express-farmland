@@ -243,6 +243,18 @@ prisma/schema.prisma
 > ค่าตัวเลขจริง (min/max, ปริมาณสาร, รอบวัน) ให้ถามผู้ใช้ตอนทำ seed เพราะผู้ใช้ custom เอง
 
 ## Log การเปลี่ยนแปลง
+- **2026-07-05** — **รอบฟีดแบ็คที่ 4 (9 ข้อ — หน้าปู + แดชบอร์ด)** — BE+FE typecheck ผ่าน + ทดสอบ server จริง end-to-end ผ่าน:
+  - **migration `phase15_crab_ux`** (apply ลง DB จริงแล้ว): `CrabSystem.eggCheckDays/meatCheckDays Int?` (เกณฑ์เตือนเช็ค ข้อ 3) + `CrabSystem.sizeBuckets Json?` (ช่วงตัวโล ข้อ 5); `Crab.feedingNote String?`(ข้อ 4) + `Crab.lastCheckedAt DateTime?`(ข้อ 3,8); model ใหม่ `CrabHistory{crabId,zone,snapshot Json,recordedAt}` (ประวัติแยกโซน ข้อ 8, zone=String ไม่ใช่ enum); enum `ReminderType` เพิ่ม `CRAB_CHECK`
+  - **ข้อ 1 (scroll เด้ง):** FE `CrabsView` เพิ่ม `reload()` (โหลดใหม่ไม่ toggle loading → grid ไม่ถูกถอด) + `withScrollPreserved()` (คืน window.scrollY + gridCard.scrollLeft) ครอบ saveAll/removeTab/saveBatch
+  - **ข้อ 2 (ไฮไลต์กล่องล่าสุด):** `lastBoxId` set ใน openBox → class `box-recent` (ขอบทอง) + คลิกพื้นที่ว่างในตาราง (`onGridClick`) เคลียร์
+  - **ข้อ 3 (อายุ+เตือนเช็ค):** FE โชว์ "Xd" ต่อตัว + ป้าย due บนกล่อง (`checkDue` = daysSince(lastCheckedAt??purchaseDate) ≥ เกณฑ์ชนิด); ตั้งเกณฑ์ใน dialog ตั้งค่าระบบ; **BE `services/crabCheck.service.ts` `generateCrabCheckTasks()`** (mirror generateRestockTasks) เรียกใน `scheduler.tick` → สร้าง Task `CRAB_CHECK` (`linkType:'Crab'`); ปิดเมื่อบันทึกโซน MEASURE (ใน `updateCrab`) หรือกด "ทำเสร็จแล้ว" (CRAB_CHECK ไม่อยู่ใน RECORD_CLOSED_TYPES)
+  - **ข้อ 4 (การกิน):** `Crab.feedingNote` + FE โซน "การกิน" (chip `ไม่กินปลา/ไม่กินหอย/กินน้อย/กินปกติ` + พิมพ์เพิ่ม) + ไอคอนบนกล่อง
+  - **ข้อ 7:** filter chip โชว์จำนวน (`filterCounts`)
+  - **ข้อ 8 (วันเช็ค + ประวัติแยกโซน):** ฟอร์มเพิ่มช่อง `lastCheckedAt` (default วันนี้เฉพาะปูใหม่); **BE `updateCrab` diff โซน** (`ZONE_FIELDS` MEASURE/CLASSIFY/FEEDING/SOURCE) → insert `CrabHistory` เฉพาะโซนที่ค่าเปลี่ยนจริง; `getCrab` include history; FE lazy-load `crabApi.get(id)` + ปุ่ม `mdi-history` ต่อโซน (popover); **ทดสอบ: patch แค่น้ำหนัก→ประวัติเพิ่มเฉพาะ MEASURE, patch แค่ feedingNote→เฉพาะ FEEDING** ✅
+  - **ข้อ 5 (แดชบอร์ด+ข้อความโพสต์):** `DashboardView` โหลด `crabApi.list` คำนวณสต็อกสด (ไข่/เนื้อ/พร้อมขาย/อายุเฉลี่ย) + การ์ดข้อความโพสต์ (จัดกลุ่มปู READY ตาม `sizeBuckets` `perKilo=1000/weightG` → กี่โล, textarea แก้ได้ + copy) + dialog ตั้งช่วงไซส์ (persist `systemApi.update(sizeBuckets)`) + ตาราง byCategory/กำไรต่อวัน
+  - **ข้อ 6 (ส่งออก CSV):** BE `crab.service.exportCrabsCsv` + route `GET /crabs/export?systemId` (ต้องมาก่อน `/:id`, มี BOM ให้ Excel อ่านไทย); FE `crabApi.exportCsv` (blob) + ปุ่มในแดชบอร์ด
+  - **ข้อ 9 (ESP32):** ตอบเป็นคำแนะนำเตรียมตัวเท่านั้น (device API key + `/api/ingest/reading` + `SensorReading`/แปลงเป็น WaterTest ใช้ event chain เดิม) — ยังไม่เขียนโค้ด ดูแผน `goofy-herding-waffle.md`
+  - **gotcha:** (1) nullable **Json** (`sizeBuckets`) ต้องใช้ `Prisma.DbNull` แทน null (มี `normalizeSystemData` ใน system.service); (2) enum `reminderType` ใน `routes/scheduler.ts` ต้องเพิ่ม `CRAB_CHECK` ด้วย ไม่งั้น query `/tasks?type=CRAB_CHECK` 400
 - **2026-06-30** — **รอบฟีดแบ็คที่ 3 (8 ข้อ)** — BE typecheck + FE build ผ่าน:
   - **#1 ไอคอน tab browser:** เปลี่ยน `public/favicon.svg` เป็นปู 🦀 (พื้นเขียว) + `index.html <title>` = "🦀 ฟาร์มปูคอนโด"; เอา avatar วงกลม 🦀 (พื้นจาง contrast ไม่พอ) ออกจาก `App.vue` nav bar → เหลือ title เรียบ
   - **#2 chip กรองคู่ค้า:** `CommerceView` แท็บคู่ค้าเพิ่ม chip `ทั้งหมด / คนรับซื้อปูแน่น (BUYER) / ผู้ขายปูอ่อน (SELLER)` (BOTH เข้าทั้งสอง) + relabel ชนิดในตาราง/ดรอปดาวน์

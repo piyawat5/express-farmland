@@ -63,8 +63,10 @@
 | PATCH | `/api/systems/:id` | แก้ (body partial) |
 | DELETE | `/api/systems/:id` | ลบ (cascade กล่อง/ถัง) |
 
-**Body (POST):** `{ name*, location?, waterVolumeL?, minLevelNote?, maxLevelNote?, status?(ACTIVE|INACTIVE), ownerId?, notifyEmail?, note? }`
+**Body (POST):** `{ name*, location?, waterVolumeL?, minLevelNote?, maxLevelNote?, status?(ACTIVE|INACTIVE), ownerId?, notifyEmail?, eggCheckDays?, meatCheckDays?, sizeBuckets?, note? }`
 - `ownerId` ถ้าไม่ส่ง → ตั้งเป็น **ผู้สร้าง** (req.user) อัตโนมัติ; `notifyEmail` = อีเมลแจ้งเตือนเฉพาะระบบ (ข้อ 4)
+- `eggCheckDays`/`meatCheckDays` (Int, nullable) = เกณฑ์ "เลี้ยงครบกี่วันควรเช็คไข่/เนื้อ" → scheduler สร้าง Task `CRAB_CHECK` (ข้อ 3)
+- `sizeBuckets` (Json, nullable) = ช่วงไซส์ตัวโลสำหรับข้อความโพสต์ `[{minPerKilo, maxPerKilo}]` (ข้อ 5) — set null ใช้ `Prisma.DbNull` ที่ service
 - response มี field `ownerId` + `notifyEmail` — frontend ใช้ `ownerId` เทียบกับ user ปัจจุบันเพื่อรู้ว่าแก้ได้ไหม
 
 ### CrabBox (nested + รายตัว)
@@ -91,8 +93,9 @@
 | Method | Path | หมายเหตุ |
 |---|---|---|
 | GET | `/api/crabs?systemId&status&type` | list + filter |
+| GET | `/api/crabs/export?systemId` | **ส่งออก CSV** (ข้อ 6) — คืน `text/csv` (มี BOM), 1 แถว/ตัว |
 | POST | `/api/crabs` | สร้าง |
-| GET | `/api/crabs/:id` | รายตัว |
+| GET | `/api/crabs/:id` | รายตัว (+`history[]` แยกโซน) |
 | PATCH | `/api/crabs/:id` | แก้ |
 | DELETE | `/api/crabs/:id` | ลบ |
 
@@ -100,9 +103,12 @@
 - `type`: `MEAT` · `EGG` · `UNKNOWN`
 - `sex`: `MALE` (ผู้) · `INTERSEX` (กะเทย) · `FEMALE` (เมีย) · `UNKNOWN` — default `UNKNOWN`
 - `grade`: `A` (สมบูรณ์) · `B` (ไม่สมบูรณ์) · `null`
-- **Body:** `{ systemId*, code?, boxId?, cableTieColor?, type?, sex?, grade?, sourceSellerId?, buyerId?, lockedForBuyerId?, purchasePrice?, purchaseDate?, weightG?, startFirmnessPct?(0-100), currentFirmnessPct?(0-100), readyAt?, sellPrice?, sellDate?, status?, round?, note? }`
+- **Body:** `{ systemId*, code?, boxId?, cableTieColor?, feedingNote?, lastCheckedAt?, type?, sex?, grade?, sourceSellerId?, buyerId?, lockedForBuyerId?, purchasePrice?, purchaseDate?, weightG?, startFirmnessPct?(0-100), currentFirmnessPct?(0-100), readyAt?, sellPrice?, sellDate?, status?, round?, note? }`
 - `cableTieColor` = สีเคเบิ้ลไทล์รัดกล้าม (hex/ชื่อสี) — **1 กล่องใส่ปูได้หลายตัว** ใช้สีแยกว่าตัวไหนเป็นตัวไหน (ข้อ 2.2)
 - `currentFirmnessPct` = %ความแน่นเนื้อ (MEAT) หรือ **%ไข่ (EGG)** — frontend โชว์บนกล่อง (ข้อ 3)
+- `feedingNote` = พฤติกรรมการกิน (ไม่กินปลา/ไม่กินหอย/กินน้อย ...) โชว์หน้ากล่อง (ข้อ 4)
+- `lastCheckedAt` = วันเช็คไข่/เนื้อล่าสุด (ข้อ 3,8) — ถ้าบันทึกค่าวัด (weight/firmness) โดยไม่ส่งมา → auto = วันนี้; ใช้คิด due ของ Task `CRAB_CHECK`
+- **`GET /api/crabs/:id` คืน `history[]`** (ข้อ 8): `[{ id, zone('MEASURE'|'CLASSIFY'|'FEEDING'|'SOURCE'), snapshot(Json), recordedAt }]` เรียงใหม่→เก่า — `PATCH` บันทึก `CrabHistory` **เฉพาะโซนที่ค่าเปลี่ยนจริง**; แก้โซน MEASURE → ปิด Task `CRAB_CHECK` ของปูตัวนั้น
 - **gotcha:** ผูกปูเข้ากล่อง (`boxId`) → backend sync `CrabBox.status` (มีปูเป็นๆ ≥1 = OCCUPIED); **ไม่กันจำนวนปูต่อกล่องแล้ว** (เดิมกัน 1 ตัว/กล่อง)
 
 ---
@@ -168,6 +174,8 @@
 | GET / POST | `/api/scheduler/tick` | secret ทาง header `x-scheduler-secret` **หรือ** query `?secret=` (= env `SCHEDULER_SECRET`) |
 
 > frontend ปกติ **ไม่ต้องเรียก** อันนี้ — เป็นงานของ cron บน Plesk
+> response: `{ now, generated, restock, crabCheck, pending, emailsSent }` — `crabCheck` = Task `CRAB_CHECK` ที่สร้างใหม่ (ปูถึงกำหนดเช็ค, ข้อ 3)
+- `type` ของ ReminderRule/Task รองรับค่าเพิ่ม `CRAB_CHECK` (สร้างอัตโนมัติจาก scheduler ไม่ใช่จากกฎ)
 
 ### ReminderRule (กฎแจ้งเตือน)
 | Method | Path | หมายเหตุ |

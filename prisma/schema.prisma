@@ -101,6 +101,11 @@ model CrabSystem {
   owner        User?        @relation(fields: [ownerId], references: [id])
   ownerId      Int? // เจ้าของระบบ → ใช้ resolve ปลายทางแจ้งเตือน + สิทธิ์แก้ไข (RBAC)
   notifyEmail  String? // อีเมลแจ้งเตือนเฉพาะระบบนี้ (ข้อ 4) — เว้นว่าง = ใช้เมลเจ้าของ
+  // เกณฑ์ "เลี้ยงครบ N วันควรเช็คไข่/เนื้อ" ต่อชนิด → scheduler สร้าง Task CRAB_CHECK (ข้อ 3)
+  eggCheckDays  Int? // ปูไข่ครบกี่วันควรเช็ค%ไข่
+  meatCheckDays Int? // ปูเนื้อครบกี่วันควรเช็คความแน่น
+  // ช่วงไซส์ (ตัวโล) สำหรับสร้างข้อความโพสต์ขาย— เก็บ [{minPerKilo, maxPerKilo}] (ข้อ 5)
+  sizeBuckets  Json?
   note         String?      @db.Text
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
@@ -176,6 +181,9 @@ model Crab {
   type     CrabType   @default(UNKNOWN) // ขุนเนื้อ หรือ ขุนไข่
   sex      CrabSex    @default(UNKNOWN) // เพศ: ผู้ / กะเทย / เมีย
   grade    CrabGrade? // เกรด: A สมบูรณ์ / B ไม่สมบูรณ์
+  // พฤติกรรมการกิน (ไม่กินปลา/ไม่กินหอย/กินน้อย ...) โชว์หน้ากล่อง (ข้อ 4)
+  feedingNote String?  @db.Text
+  lastCheckedAt DateTime? // วันที่เช็คไข่/เนื้อล่าสุด — ใช้คิด due ของ CRAB_CHECK (ข้อ 3, 8)
 
   // ที่มา / ปลายทาง
   sourceSeller     Contact? @relation("CrabSeller", fields: [sourceSellerId], references: [id])
@@ -204,6 +212,20 @@ model Crab {
   feedings     FeedingRecord[]
   firmnessLogs FirmnessRecord[]
   transactions Transaction[]
+  history      CrabHistory[] // ประวัติการแก้ไขแยกโซน (ข้อ 8)
+}
+
+/// ประวัติการบันทึกค่าปูแยก "โซน" — 1 การกดบันทึกอาจแก้หลายฟิลด์ แต่เก็บเฉพาะโซนที่เปลี่ยน (ข้อ 8)
+/// zone = MEASURE (น้ำหนัก/%/วันเช็ค) | CLASSIFY (ชนิด/เพศ/เกรด/สถานะ) | FEEDING (การกิน) | SOURCE (ที่มา/ต้นทุน)
+model CrabHistory {
+  id         Int      @id @default(autoincrement())
+  crab       Crab     @relation(fields: [crabId], references: [id], onDelete: Cascade)
+  crabId     Int
+  zone       String // ใช้ String แทน enum เพื่อเพิ่มโซนใหม่ได้โดยไม่ต้อง migrate
+  snapshot   Json // ค่าของโซนนั้น ณ ตอนบันทึก
+  recordedAt DateTime @default(now())
+
+  @@index([crabId, zone])
 }
 
 enum CrabType {
@@ -476,6 +498,7 @@ enum ReminderType {
   FILTER_CLEAN // ล้างระบบกรอง (ข้อ 5)
   SUBSTANCE_PREP // เตรียมจุลินทรีย์ (ข้อ 2.3)
   RESTOCK // ของใกล้หมด ต้องไปซื้อ (อาหาร/biodigest)
+  CRAB_CHECK // ถึงกำหนดเช็คไข่/เนื้อของปู (ข้อ 3)
   CUSTOM
 }
 

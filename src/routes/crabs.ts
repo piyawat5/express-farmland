@@ -21,6 +21,8 @@ const crabBody = z.object({
   systemId: z.number().int().positive(),
   boxId: z.number().int().positive().nullable().optional(),
   cableTieColor: z.string().max(32).nullable().optional(), // สีเคเบิ้ลไทล์ (ข้อ 2.2)
+  feedingNote: z.string().max(500).nullable().optional(), // พฤติกรรมการกิน (ข้อ 4)
+  lastCheckedAt: z.coerce.date().nullable().optional(), // วันเช็คไข่/เนื้อ (ข้อ 8)
   type: crabType.optional(),
   sex: crabSex.optional(),
   grade: crabGrade.nullable().optional(),
@@ -46,6 +48,10 @@ const listQuery = z.object({
   type: crabType.optional(),
 });
 
+const exportQuery = z.object({
+  systemId: z.coerce.number().int().positive().optional(),
+});
+
 const router = Router();
 
 router.get(
@@ -54,6 +60,19 @@ router.get(
   asyncHandler(async (req, res) => {
     const { systemId, status, type } = req.query as z.infer<typeof listQuery>;
     res.json(serialize(await svc.listCrabs(req.user!, { systemId, status, type })));
+  }),
+);
+
+// ส่งออกรายงานปู CSV (ข้อ 6) — ต้องมาก่อน '/:id' ไม่งั้น 'export' โดนจับเป็น id
+router.get(
+  '/export',
+  validate({ query: exportQuery }),
+  asyncHandler(async (req, res) => {
+    const { systemId } = req.query as z.infer<typeof exportQuery>;
+    const csv = await svc.exportCrabsCsv(req.user!, systemId);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="crabs-export.csv"');
+    res.send(csv);
   }),
 );
 

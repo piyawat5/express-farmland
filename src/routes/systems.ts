@@ -26,6 +26,12 @@ const systemBody = z.object({
   status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
   ownerId: z.number().int().positive().optional(),
   notifyEmail: z.string().email().nullable().optional(), // อีเมลแจ้งเตือนเฉพาะระบบ (ข้อ 4)
+  eggCheckDays: z.number().int().min(1).max(365).nullable().optional(), // เกณฑ์เช็คปูไข่ (ข้อ 3)
+  meatCheckDays: z.number().int().min(1).max(365).nullable().optional(), // เกณฑ์เช็คปูเนื้อ (ข้อ 3)
+  sizeBuckets: z
+    .array(z.object({ minPerKilo: z.number().positive(), maxPerKilo: z.number().positive() }))
+    .nullable()
+    .optional(), // ช่วงไซส์ (ตัวโล) สำหรับข้อความโพสต์ (ข้อ 5)
   note: z.string().optional(),
 });
 

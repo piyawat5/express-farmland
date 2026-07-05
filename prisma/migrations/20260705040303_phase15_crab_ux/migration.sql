@@ -1,0 +1,29 @@
+-- AlterTable
+ALTER TABLE `Crab` ADD COLUMN `feedingNote` TEXT NULL,
+    ADD COLUMN `lastCheckedAt` DATETIME(3) NULL;
+
+-- AlterTable
+ALTER TABLE `CrabSystem` ADD COLUMN `eggCheckDays` INTEGER NULL,
+    ADD COLUMN `meatCheckDays` INTEGER NULL,
+    ADD COLUMN `sizeBuckets` JSON NULL;
+
+-- AlterTable
+ALTER TABLE `ReminderRule` MODIFY `type` ENUM('WATER_TEST', 'DOSING', 'FRESHWATER_TOPUP', 'FEEDING', 'SCRAP_COLLECT', 'FILTER_CLEAN', 'SUBSTANCE_PREP', 'RESTOCK', 'CRAB_CHECK', 'CUSTOM') NOT NULL;
+
+-- AlterTable
+ALTER TABLE `Task` MODIFY `type` ENUM('WATER_TEST', 'DOSING', 'FRESHWATER_TOPUP', 'FEEDING', 'SCRAP_COLLECT', 'FILTER_CLEAN', 'SUBSTANCE_PREP', 'RESTOCK', 'CRAB_CHECK', 'CUSTOM') NOT NULL;
+
+-- CreateTable
+CREATE TABLE `CrabHistory` (
+    `id` INTEGER NOT NULL AUTO_INCREMENT,
+    `crabId` INTEGER NOT NULL,
+    `zone` VARCHAR(191) NOT NULL,
+    `snapshot` JSON NOT NULL,
+    `recordedAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    INDEX `CrabHistory_crabId_zone_idx`(`crabId`, `zone`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- AddForeignKey
+ALTER TABLE `CrabHistory` ADD CONSTRAINT `CrabHistory_crabId_fkey` FOREIGN KEY (`crabId`) REFERENCES `Crab`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
