@@ -99,6 +99,7 @@
 | GET | `/api/crabs/:id` | รายตัว (+`history[]` แยกโซน) |
 | PATCH | `/api/crabs/:id` | แก้ |
 | DELETE | `/api/crabs/:id` | ลบ |
+| PATCH | `/api/crabs/history/:id` | **แก้ไขรอบในประวัติ 1 แถว** (ข้อ 1) — body `{ weightG?, currentFirmnessPct?, imageUrl?, imagePublicId?, lastCheckedAt? }` (null = ลบ/เคลียร์); ตัวเลข/วันที่แก้ได้เฉพาะโซน MEASURE; **ถ้าเป็นรอบ MEASURE ล่าสุด → sync ค่าปัจจุบันของปูให้ตรง** |
 | DELETE | `/api/crabs/history/:id` | ลบประวัติแยกโซน 1 แถว (ข้อ 8) — ใช้ลบแถวซ้ำ/ผิด (ลบรูปบน Cloudinary ให้ด้วย best-effort) |
 
 - `status`: `FATTENING` · `READY` · `SOLD` · `DEAD`

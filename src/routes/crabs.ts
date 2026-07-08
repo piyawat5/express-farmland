@@ -98,6 +98,22 @@ router.post(
   }),
 );
 
+// แก้ไขรอบในประวัติ 1 แถว (ข้อ 1 — ตัวเลข/วันที่/รูป ย้อนหลัง) — path 2 segment
+const historyPatchBody = z.object({
+  imageUrl: z.string().url().nullable().optional(),
+  imagePublicId: z.string().nullable().optional(),
+  weightG: z.number().nonnegative().nullable().optional(),
+  currentFirmnessPct: z.number().int().min(0).max(100).nullable().optional(),
+  lastCheckedAt: z.coerce.date().nullable().optional(),
+});
+router.patch(
+  '/history/:id',
+  validate({ params: idParam, body: historyPatchBody }),
+  asyncHandler(async (req, res) => {
+    res.json(serialize(await svc.updateCrabHistory(Number(req.params.id), req.user!, req.body)));
+  }),
+);
+
 // ลบประวัติแยกโซน 1 รายการ (ข้อ 8) — path 2 segment ไม่ชนกับ '/:id'
 router.delete(
   '/history/:id',

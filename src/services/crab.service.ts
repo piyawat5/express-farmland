@@ -276,6 +276,81 @@ export async function deleteCrabHistory(id: number, user: AuthUser) {
   await deleteImage(snap?.imagePublicId ?? null);
 }
 
+/**
+ * แก้ไข "รอบ" ในประวัติ 1 แถว (ข้อ 1) — แก้ตัวเลข/วันที่/รูป ของรอบเก่าได้โดยไม่สร้างรอบซ้ำ
+ * - ค่าตัวเลข/วันที่แก้ได้เฉพาะโซน MEASURE
+ * - ถ้าเป็นรอบ MEASURE "ล่าสุด" → sync ค่าปัจจุบันของปู (weightG/%/วันเช็ค) ให้ตรง (โชว์บนกล่อง)
+ * - เปลี่ยน/ลบรูป → ลบรูปเก่าบน Cloudinary (best-effort)
+ */
+export async function updateCrabHistory(
+  id: number,
+  user: AuthUser,
+  data: {
+    imageUrl?: string | null;
+    imagePublicId?: string | null;
+    weightG?: number | null;
+    currentFirmnessPct?: number | null;
+    lastCheckedAt?: string | Date | null;
+  },
+) {
+  const h = await prisma.crabHistory.findUnique({
+    where: { id },
+    include: { crab: { select: { id: true, system: { select: { ownerId: true } } } } },
+  });
+  if (!h) throw notFound('ไม่พบประวัตินี้');
+  assertOwnership(user, h.crab.system.ownerId);
+
+  const numericTouched =
+    data.weightG !== undefined ||
+    data.currentFirmnessPct !== undefined ||
+    data.lastCheckedAt !== undefined;
+  if (numericTouched && h.zone !== 'MEASURE') {
+    throw badRequest('แก้ไขค่าวัด (น้ำหนัก/%/วันที่) ได้เฉพาะประวัติโซนข้อมูลวัด');
+  }
+
+  const snap = (h.snapshot ?? {}) as Record<string, Prisma.InputJsonValue | null>;
+  const snapshot: Record<string, Prisma.InputJsonValue | null> = { ...snap };
+
+  // รูป (แก้เฉพาะเมื่อส่ง field รูปมา)
+  const imageTouched = data.imageUrl !== undefined || data.imagePublicId !== undefined;
+  const oldPublicId = typeof snap.imagePublicId === 'string' ? snap.imagePublicId : null;
+  const newPublicId = imageTouched ? (data.imagePublicId ?? null) : oldPublicId;
+  if (imageTouched) {
+    snapshot.imageUrl = data.imageUrl ?? null;
+    snapshot.imagePublicId = newPublicId;
+  }
+  // ตัวเลข/วันที่
+  if (data.weightG !== undefined) snapshot.weightG = data.weightG ?? null;
+  if (data.currentFirmnessPct !== undefined) snapshot.currentFirmnessPct = data.currentFirmnessPct ?? null;
+  if (data.lastCheckedAt !== undefined) {
+    snapshot.lastCheckedAt = data.lastCheckedAt ? new Date(data.lastCheckedAt).toISOString() : null;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.crabHistory.update({ where: { id }, data: { snapshot } });
+    // แก้รอบ MEASURE ล่าสุด → sync ค่าปัจจุบันของปูให้ตรง
+    if (numericTouched) {
+      const latest = await tx.crabHistory.findFirst({
+        where: { crabId: h.crab.id, zone: 'MEASURE' },
+        orderBy: { recordedAt: 'desc' },
+        select: { id: true },
+      });
+      if (latest?.id === id) {
+        const crabData: Prisma.CrabUncheckedUpdateInput = {};
+        if (data.weightG !== undefined) crabData.weightG = data.weightG ?? null;
+        if (data.currentFirmnessPct !== undefined) crabData.currentFirmnessPct = data.currentFirmnessPct ?? null;
+        if (data.lastCheckedAt !== undefined) {
+          crabData.lastCheckedAt = data.lastCheckedAt ? new Date(data.lastCheckedAt) : null;
+        }
+        await tx.crab.update({ where: { id: h.crab.id }, data: crabData });
+      }
+    }
+  });
+
+  if (imageTouched && oldPublicId && oldPublicId !== newPublicId) await deleteImage(oldPublicId);
+  return prisma.crabHistory.findUnique({ where: { id } });
+}
+
 /** คืนกล่องเป็น EMPTY ถ้าไม่มีปูที่ยังอยู่จริงในกล่องนั้นแล้ว */
 async function freeBoxIfEmpty(tx: Prisma.TransactionClient, boxId: number) {
   const living = await tx.crab.count({
