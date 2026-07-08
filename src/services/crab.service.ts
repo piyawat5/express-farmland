@@ -376,6 +376,7 @@ export type CrabProgress = {
   code: string | null;
   boxId: number | null;
   boxCode: string | null;
+  boxLabel: string | null; // ชื่อกล่องที่ผู้ใช้ตั้งเอง (ถ้ามี ใช้แทน code — ให้ตรงกับตารางกล่อง)
   type: string;
   cableTieColor: string | null;
   status: string;
@@ -403,7 +404,7 @@ export async function listCrabProgress(user: AuthUser, systemId?: number): Promi
     where: { ...scope, status: { in: ['FATTENING', 'READY'] } },
     orderBy: [{ boxId: 'asc' }, { id: 'asc' }],
     include: {
-      box: { select: { id: true, code: true } },
+      box: { select: { id: true, code: true, label: true } },
       history: { where: { zone: 'MEASURE' }, orderBy: { recordedAt: 'desc' }, take: 2 },
     },
   });
@@ -423,6 +424,7 @@ export async function listCrabProgress(user: AuthUser, systemId?: number): Promi
       code: c.code,
       boxId: c.boxId,
       boxCode: c.box?.code ?? null,
+      boxLabel: c.box?.label ?? null,
       type: c.type,
       cableTieColor: c.cableTieColor,
       status: c.status,
