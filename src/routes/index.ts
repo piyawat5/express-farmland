@@ -10,6 +10,7 @@ import { schedulerRouter, reminderRuleRouter, taskRouter, systemEventRouter } fr
 import { contactRouter, transactionRouter, outreachRouter } from './commerce';
 import { ledgerRouter, dashboardRouter } from './finance';
 import inventoryRoutes from './inventory';
+import uploadRoutes from './uploads';
 
 const api = Router();
 
@@ -47,5 +48,7 @@ api.use('/ledger', ledgerRouter);
 api.use('/dashboard', dashboardRouter);
 // G. คลังของ (อาหาร/สาร/อุปกรณ์ + แจ้งเตือนใกล้หมด)
 api.use('/inventory', inventoryRoutes);
+// รูปภาพประวัติพัฒนาการปู (Cloudinary)
+api.use('/uploads', uploadRoutes);
 
 export default api;

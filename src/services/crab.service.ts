@@ -3,6 +3,16 @@ import { prisma } from '../lib/prisma';
 import { notFound, badRequest } from '../lib/http';
 import type { AuthUser } from './auth.service';
 import { systemScopeWhere, assertOwnership } from '../lib/scope';
+import { deleteImage } from '../lib/cloudinary';
+
+// ฟิลด์ชั่วคราวสำหรับแนบรูปประวัติ (โซน MEASURE) — ไม่ใช่คอลัมน์ของ Crab
+// FE ส่งมาเฉพาะตอนอัปรูปใหม่ในเซสชันนั้น → destructure ออกก่อนส่ง prisma
+type MeasureImageFields = {
+  measureImageUrl?: string | null;
+  measureImagePublicId?: string | null;
+};
+export type CreateCrabInput = Prisma.CrabUncheckedCreateInput & MeasureImageFields;
+export type UpdateCrabInput = Prisma.CrabUncheckedUpdateInput & MeasureImageFields;
 
 // ── โมดูล B: Crab = ปู 1 ตัว (1 กล่อง = หลายตัวได้ — แยกด้วยเคเบิ้ลไทล์สี, ข้อ 2) ──
 
@@ -119,7 +129,8 @@ function diffZones(
   return zones;
 }
 
-export function createCrab(data: Prisma.CrabUncheckedCreateInput) {
+export function createCrab(input: CreateCrabInput) {
+  const { measureImageUrl, measureImagePublicId, ...data } = input;
   return prisma.$transaction(async (tx) => {
     if (data.boxId != null) {
       await assertBoxInSystem(tx, data.systemId, data.boxId);
@@ -144,8 +155,9 @@ export function createCrab(data: Prisma.CrabUncheckedCreateInput) {
     if (crab.boxId != null) {
       await tx.crabBox.update({ where: { id: crab.boxId }, data: { status: 'OCCUPIED' } });
     }
-    // ประวัติเริ่มต้นโซนวัด (ถ้ามีค่าวัดตอนสร้าง)
-    if (crab.weightG != null || crab.currentFirmnessPct != null || crab.lastCheckedAt != null) {
+    // ประวัติเริ่มต้นโซนวัด (ถ้ามีค่าวัดหรือรูปตอนสร้าง)
+    const hasImage = measureImageUrl != null;
+    if (crab.weightG != null || crab.currentFirmnessPct != null || crab.lastCheckedAt != null || hasImage) {
       await tx.crabHistory.create({
         data: {
           crabId: crab.id,
@@ -154,6 +166,8 @@ export function createCrab(data: Prisma.CrabUncheckedCreateInput) {
             weightG: toJson(crab.weightG),
             currentFirmnessPct: toJson(crab.currentFirmnessPct),
             lastCheckedAt: toJson(crab.lastCheckedAt),
+            imageUrl: measureImageUrl ?? null,
+            imagePublicId: measureImagePublicId ?? null,
           },
         },
       });
@@ -162,14 +176,16 @@ export function createCrab(data: Prisma.CrabUncheckedCreateInput) {
   });
 }
 
-export function updateCrab(id: number, data: Prisma.CrabUncheckedUpdateInput) {
+export function updateCrab(id: number, input: UpdateCrabInput) {
+  const { measureImageUrl, measureImagePublicId, ...data } = input;
+  const imageProvided = measureImageUrl !== undefined; // FE ส่งมาเฉพาะตอนอัปรูปใหม่
   return prisma.$transaction(async (tx) => {
     const current = await tx.crab.findUnique({ where: { id } });
     if (!current) throw notFound('ไม่พบปูตัวนี้');
 
-    // บันทึกค่าวัดใหม่แต่ไม่ได้ตั้งวันเช็ค → auto stamp วันนี้ (ข้อ 8)
+    // บันทึกค่าวัดใหม่ (หรืออัปรูป) แต่ไม่ได้ตั้งวันเช็ค → auto stamp วันนี้ (ข้อ 8)
     const measureTouched = data.weightG !== undefined || data.currentFirmnessPct !== undefined;
-    if (measureTouched && (data.lastCheckedAt === undefined || data.lastCheckedAt === null)) {
+    if ((measureTouched || imageProvided) && (data.lastCheckedAt === undefined || data.lastCheckedAt === null)) {
       data.lastCheckedAt = new Date();
     }
 
@@ -187,6 +203,24 @@ export function updateCrab(id: number, data: Prisma.CrabUncheckedUpdateInput) {
       current as unknown as Record<string, unknown>,
       data as unknown as Record<string, unknown>,
     );
+
+    // แนบรูปเข้ารอบ MEASURE — บังคับสร้างรอบใหม่แม้อัปรูปอย่างเดียว (ค่าอื่นไม่เปลี่ยน)
+    if (imageProvided) {
+      let m = zones.find((z) => z.zone === 'MEASURE');
+      if (!m) {
+        m = {
+          zone: 'MEASURE',
+          snapshot: {
+            weightG: toJson(current.weightG),
+            currentFirmnessPct: toJson(current.currentFirmnessPct),
+            lastCheckedAt: toJson(data.lastCheckedAt !== undefined ? data.lastCheckedAt : current.lastCheckedAt),
+          },
+        };
+        zones.push(m);
+      }
+      m.snapshot.imageUrl = measureImageUrl ?? null;
+      m.snapshot.imagePublicId = measureImagePublicId ?? null;
+    }
 
     const crab = await tx.crab.update({ where: { id }, data });
 
@@ -237,6 +271,9 @@ export async function deleteCrabHistory(id: number, user: AuthUser) {
   if (!h) throw notFound('ไม่พบประวัตินี้');
   assertOwnership(user, h.crab.system.ownerId);
   await prisma.crabHistory.delete({ where: { id } });
+  // best-effort ลบรูปบน Cloudinary (ถ้าแถวนี้มีรูปแนบ)
+  const snap = h.snapshot as { imagePublicId?: string | null } | null;
+  await deleteImage(snap?.imagePublicId ?? null);
 }
 
 /** คืนกล่องเป็น EMPTY ถ้าไม่มีปูที่ยังอยู่จริงในกล่องนั้นแล้ว */
@@ -247,6 +284,79 @@ async function freeBoxIfEmpty(tx: Prisma.TransactionClient, boxId: number) {
   if (living === 0) {
     await tx.crabBox.update({ where: { id: boxId }, data: { status: 'EMPTY' } });
   }
+}
+
+// ── ภาพรวมพัฒนาการปู (before/after) — 2 รอบวัด MEASURE ล่าสุดต่อตัว (ข้อ 2) ──
+const DAY_MS = 1000 * 60 * 60 * 24;
+
+export type MeasureRound = {
+  recordedAt: string;
+  measuredAt: string | null; // = lastCheckedAt ในรอบนั้น (วันที่ผู้ใช้เลือก)
+  weightG: number | null;
+  firmnessPct: number | null;
+  imageUrl: string | null;
+};
+export type CrabProgress = {
+  id: number;
+  code: string | null;
+  boxId: number | null;
+  boxCode: string | null;
+  type: string;
+  cableTieColor: string | null;
+  status: string;
+  before: MeasureRound | null; // รอบก่อนหน้า (เก่ากว่า)
+  after: MeasureRound | null; // รอบล่าสุด
+  deltaDays: number | null; // จำนวนวัน before → after
+};
+
+/** แปลง 1 แถวประวัติโซน MEASURE → MeasureRound (snapshot เป็น Json) */
+function toMeasureRound(h: { recordedAt: Date; snapshot: Prisma.JsonValue }): MeasureRound {
+  const s = (h.snapshot ?? {}) as Record<string, unknown>;
+  return {
+    recordedAt: h.recordedAt.toISOString(),
+    measuredAt: s.lastCheckedAt != null ? String(s.lastCheckedAt) : null,
+    weightG: s.weightG != null ? Number(s.weightG) : null,
+    firmnessPct: s.currentFirmnessPct != null ? Number(s.currentFirmnessPct) : null,
+    imageUrl: s.imageUrl != null ? String(s.imageUrl) : null,
+  };
+}
+
+/** ภาพรวมพัฒนาการปูที่ยังเลี้ยงอยู่ (before/after 2 รอบวัดล่าสุด) — สำหรับหน้า "พัฒนาการปู" */
+export async function listCrabProgress(user: AuthUser, systemId?: number): Promise<CrabProgress[]> {
+  const scope = await systemScopeWhere(user, systemId);
+  const crabs = await prisma.crab.findMany({
+    where: { ...scope, status: { in: ['FATTENING', 'READY'] } },
+    orderBy: [{ boxId: 'asc' }, { id: 'asc' }],
+    include: {
+      box: { select: { id: true, code: true } },
+      history: { where: { zone: 'MEASURE' }, orderBy: { recordedAt: 'desc' }, take: 2 },
+    },
+  });
+  const out: CrabProgress[] = [];
+  for (const c of crabs) {
+    if (c.history.length === 0) continue; // ยังไม่มีรอบวัด = ข้าม
+    const after = toMeasureRound(c.history[0]);
+    const before = c.history[1] ? toMeasureRound(c.history[1]) : null;
+    let deltaDays: number | null = null;
+    if (before) {
+      const a = new Date(after.measuredAt ?? after.recordedAt).getTime();
+      const b = new Date(before.measuredAt ?? before.recordedAt).getTime();
+      deltaDays = Math.round((a - b) / DAY_MS);
+    }
+    out.push({
+      id: c.id,
+      code: c.code,
+      boxId: c.boxId,
+      boxCode: c.box?.code ?? null,
+      type: c.type,
+      cableTieColor: c.cableTieColor,
+      status: c.status,
+      before,
+      after,
+      deltaDays,
+    });
+  }
+  return out;
 }
 
 // ── ส่งออกรายงานปู CSV (ข้อ 6) — เอาไปเทรน/วิเคราะห์แผนให้อาหารต่อได้ ──

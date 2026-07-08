@@ -42,6 +42,11 @@ const schema = z.object({
   LINE_CHANNEL_SECRET: z.string().optional(),
   OAUTH_CALLBACK_BASE: z.string().optional(), // เช่น http://localhost:3000/api/auth/oauth
 
+  // Cloudinary (รูปประวัติพัฒนาการปู) — optional จนกว่าจะตั้งค่า (ถ้าไม่ตั้ง อัปรูปจะ 503)
+  CLOUDINARY_CLOUD_NAME: z.string().optional(),
+  CLOUDINARY_API_KEY: z.string().optional(),
+  CLOUDINARY_API_SECRET: z.string().optional(),
+
   // Scheduler
   SCHEDULER_SECRET: z.string().min(1, 'SCHEDULER_SECRET is required'),
   ENABLE_INTERNAL_CRON: z

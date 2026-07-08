@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
+import { MulterError } from 'multer';
 import { ZodError } from 'zod';
 import { AppError } from '../lib/http';
 
@@ -10,6 +11,12 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
       error: 'ข้อมูลไม่ถูกต้อง',
       details: err.flatten().fieldErrors,
     });
+  }
+
+  // อัปโหลดไฟล์ (multer) — เช่น ไฟล์ใหญ่เกิน limit
+  if (err instanceof MulterError) {
+    const msg = err.code === 'LIMIT_FILE_SIZE' ? 'ไฟล์รูปใหญ่เกิน 8MB' : 'อัปโหลดไฟล์ไม่สำเร็จ';
+    return res.status(400).json({ error: msg, details: err.code });
   }
 
   if (err instanceof AppError) {

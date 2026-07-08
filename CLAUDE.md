@@ -4,6 +4,16 @@
 > อัปเดตทุกครั้งที่มี decision สำคัญ / สร้าง module ใหม่ / เปลี่ยน schema
 
 ## 👉 ทำต่อจากตรงนี้ (NEXT — session ใหม่อ่านตรงนี้ก่อน)
+### 🖼️ รูปภาพประวัติ (Cloudinary) + เปรียบเทียบพัฒนาการปู before/after + chip scroll-x (2026-07-08) — BE+FE typecheck ผ่าน, รอทดสอบ server จริง
+แผน: `C:\Users\piyawat\.claude\plans\purring-zooming-nebula.md`
+- **ไม่ต้อง migrate DB** — รูปเก็บใน `CrabHistory.snapshot` (Json) โซน MEASURE ที่มีอยู่ (keys ใหม่ `imageUrl`/`imagePublicId`)
+- **deps ใหม่ (backend):** `cloudinary`, `multer`, `@types/multer`. **env ใหม่ (optional):** `CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET` (เพิ่มใน `config/env.ts`+`.env.example` แล้ว — ⚠️ **ผู้ใช้ต้องใส่ค่าจริง** ไม่งั้น `/api/uploads/crab-image` คืน 503)
+- **ข้อ 1 (แนบรูป):** `lib/cloudinary.ts` (signed upload ผ่าน backend: `uploadImage`/`deleteImage`/`cloudinaryConfigured`) + `routes/uploads.ts` (`POST /uploads/crab-image` multer memory ≤8MB, image/* เท่านั้น) mount ใต้ `requireAuth`; `middleware/error.ts` จับ `MulterError` (ไฟล์ใหญ่→400); `crab.service` create/update รับฟิลด์ชั่วคราว `measureImageUrl`/`measureImagePublicId` (destructure ออกก่อน prisma) → ยัดลง MEASURE snapshot; **มีรูป → บังคับสร้างรอบ MEASURE ใหม่แม้ค่าอื่นไม่เปลี่ยน**; `deleteCrabHistory` ลบรูป Cloudinary best-effort; `crabBody` zod +2 ฟิลด์
+- **ข้อ 2 (before/after):** `crab.service.listCrabProgress` + `GET /crabs/progress?systemId` (วางก่อน `/:id`) คืนปูที่ยังเลี้ยง + 2 รอบวัดล่าสุด (`before`/`after`/`deltaDays`); FE: `components/CrabCompare.vue` (รูป+น้ำหนัก+%+วัน+Δ, ซูมรูป) ใช้ทั้ง 2 ที่; **หน้าเมนูใหม่ `views/ProgressView.vue` route `/progress` group `care` "พัฒนาการปู"** (ผู้ใช้เลือก dedicated view); CrabsView popup โซนข้อมูลวัดมีปุ่ม "เทียบ" + อัปรูป (`v-file-input`→`uploadApi.crabImage`) + โชว์ "รูปล่าสุด"/thumbnail ในประวัติ
+- **ข้อ 3:** filter chip ปู (ไข่/เนื้อ/พร้อมขาย) เปลี่ยน `flex-wrap`→`.chip-scroll` (nowrap+overflow-x) มือถือไม่ตกบรรทัด
+- **กันประวัติซ้ำ:** FE ส่ง `measureImageUrl` เฉพาะตอนอัปรูปใหม่ (ไม่ prefill รูปเก่า) → save ปกติที่ไม่แตะรูปจะไม่บังคับสร้าง MEASURE row
+- ⚠️ ยังไม่ทดสอบ server จริง/อัปรูปจริง (typecheck ผ่านทั้ง BE+FE) — รอผู้ใช้ใส่ `CLOUDINARY_*` แล้วรัน `npm run dev`
+
 ### 🔐 การปรับระบบครั้งใหญ่ (Auth/Role/OAuth + Multi-crab + UI) — แบ่ง 4 เฟส
 แผนเต็ม: `C:\Users\piyawat\.claude\plans\adaptive-wobbling-umbrella.md`
 
@@ -243,6 +253,11 @@ prisma/schema.prisma
 > ค่าตัวเลขจริง (min/max, ปริมาณสาร, รอบวัน) ให้ถามผู้ใช้ตอนทำ seed เพราะผู้ใช้ custom เอง
 
 ## Log การเปลี่ยนแปลง
+- **2026-07-08** — **รูปภาพประวัติ (Cloudinary) + เปรียบเทียบพัฒนาการปู before/after + chip scroll-x** — BE+FE typecheck ผ่าน (ยังไม่ทดสอบ server จริง):
+  - **ไม่ต้อง migrate** — เก็บ `imageUrl`/`imagePublicId` ใน `CrabHistory.snapshot` (Json) โซน MEASURE; deps ใหม่ `cloudinary`/`multer`/`@types/multer`; env `CLOUDINARY_*` (optional)
+  - BE: `lib/cloudinary.ts` + `routes/uploads.ts` (`POST /uploads/crab-image` signed, ≤8MB) + `MulterError` ใน error handler; `crab.service` ผูกรูปเข้ารอบ MEASURE (มีรูป→บังคับรอบใหม่), `deleteCrabHistory` ลบรูป best-effort, `listCrabProgress` + `GET /crabs/progress`
+  - FE: `components/CrabCompare.vue`, `views/ProgressView.vue` (เมนูใหม่ `/progress` "พัฒนาการปู"), `uploadApi`+`crabApi.progress`, CrabsView โซนข้อมูลวัด (อัปรูป+ปุ่มเทียบ+thumbnail ประวัติ), filter chip → `.chip-scroll`
+  - ⚠️ ผู้ใช้ต้องใส่ `CLOUDINARY_*` จริงก่อนอัปรูปได้ (ไม่งั้น 503)
 - **2026-07-05** — **รอบฟีดแบ็คที่ 4 (9 ข้อ — หน้าปู + แดชบอร์ด)** — BE+FE typecheck ผ่าน + ทดสอบ server จริง end-to-end ผ่าน:
   - **migration `phase15_crab_ux`** (apply ลง DB จริงแล้ว): `CrabSystem.eggCheckDays/meatCheckDays Int?` (เกณฑ์เตือนเช็ค ข้อ 3) + `CrabSystem.sizeBuckets Json?` (ช่วงตัวโล ข้อ 5); `Crab.feedingNote String?`(ข้อ 4) + `Crab.lastCheckedAt DateTime?`(ข้อ 3,8); model ใหม่ `CrabHistory{crabId,zone,snapshot Json,recordedAt}` (ประวัติแยกโซน ข้อ 8, zone=String ไม่ใช่ enum); enum `ReminderType` เพิ่ม `CRAB_CHECK`
   - **ข้อ 1 (scroll เด้ง):** FE `CrabsView` เพิ่ม `reload()` (โหลดใหม่ไม่ toggle loading → grid ไม่ถูกถอด) + `withScrollPreserved()` (คืน window.scrollY + gridCard.scrollLeft) ครอบ saveAll/removeTab/saveBatch

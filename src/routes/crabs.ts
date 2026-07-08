@@ -40,6 +40,9 @@ const crabBody = z.object({
   status: crabStatus.optional(),
   round: z.number().int().positive().nullable().optional(),
   note: z.string().nullable().optional(),
+  // แนบรูปรอบวัด (โซน MEASURE) — ส่งมาเฉพาะตอนอัปรูปใหม่ (ข้อ 1)
+  measureImageUrl: z.string().url().nullable().optional(),
+  measureImagePublicId: z.string().nullable().optional(),
 });
 
 const listQuery = z.object({
@@ -73,6 +76,16 @@ router.get(
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="crabs-export.csv"');
     res.send(csv);
+  }),
+);
+
+// ภาพรวมพัฒนาการปู before/after (ข้อ 2) — ต้องมาก่อน '/:id'
+router.get(
+  '/progress',
+  validate({ query: exportQuery }),
+  asyncHandler(async (req, res) => {
+    const { systemId } = req.query as z.infer<typeof exportQuery>;
+    res.json(serialize(await svc.listCrabProgress(req.user!, systemId)));
   }),
 );
 

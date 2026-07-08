@@ -94,23 +94,34 @@
 |---|---|---|
 | GET | `/api/crabs?systemId&status&type` | list + filter |
 | GET | `/api/crabs/export?systemId` | **ส่งออก CSV** (ข้อ 6) — คืน `text/csv` (มี BOM), 1 แถว/ตัว |
+| GET | `/api/crabs/progress?systemId` | **ภาพรวมพัฒนาการปู before/after** (ปูที่ยังเลี้ยงอยู่ + 2 รอบวัดล่าสุด) |
 | POST | `/api/crabs` | สร้าง |
 | GET | `/api/crabs/:id` | รายตัว (+`history[]` แยกโซน) |
 | PATCH | `/api/crabs/:id` | แก้ |
 | DELETE | `/api/crabs/:id` | ลบ |
-| DELETE | `/api/crabs/history/:id` | ลบประวัติแยกโซน 1 แถว (ข้อ 8) — ใช้ลบแถวซ้ำ/ผิด |
+| DELETE | `/api/crabs/history/:id` | ลบประวัติแยกโซน 1 แถว (ข้อ 8) — ใช้ลบแถวซ้ำ/ผิด (ลบรูปบน Cloudinary ให้ด้วย best-effort) |
 
 - `status`: `FATTENING` · `READY` · `SOLD` · `DEAD`
 - `type`: `MEAT` · `EGG` · `UNKNOWN`
 - `sex`: `MALE` (ผู้) · `INTERSEX` (กะเทย) · `FEMALE` (เมีย) · `UNKNOWN` — default `UNKNOWN`
 - `grade`: `A` (สมบูรณ์) · `B` (ไม่สมบูรณ์) · `null`
-- **Body:** `{ systemId*, code?, boxId?, cableTieColor?, feedingNote?, lastCheckedAt?, type?, sex?, grade?, sourceSellerId?, buyerId?, lockedForBuyerId?, purchasePrice?, purchaseDate?, weightG?, startFirmnessPct?(0-100), currentFirmnessPct?(0-100), readyAt?, sellPrice?, sellDate?, status?, round?, note? }`
+- **Body:** `{ systemId*, code?, boxId?, cableTieColor?, feedingNote?, lastCheckedAt?, type?, sex?, grade?, sourceSellerId?, buyerId?, lockedForBuyerId?, purchasePrice?, purchaseDate?, weightG?, startFirmnessPct?(0-100), currentFirmnessPct?(0-100), readyAt?, sellPrice?, sellDate?, status?, round?, note?, measureImageUrl?, measureImagePublicId? }`
+- `measureImageUrl`/`measureImagePublicId` = รูปแนบรอบวัด (จาก `POST /api/uploads/crab-image`) — เก็บใน `snapshot` ของ `CrabHistory` โซน MEASURE; **ส่งมาเฉพาะตอนอัปรูปใหม่** (มีรูป → บังคับสร้างรอบ MEASURE ใหม่แม้ค่าอื่นไม่เปลี่ยน)
+- **`GET /api/crabs/progress`** คืน `[{ id, code, boxId, boxCode, type, cableTieColor, status, before, after, deltaDays }]` — `before`/`after` = `{ recordedAt, measuredAt, weightG, firmnessPct, imageUrl } | null` (`after`=รอบล่าสุด, `before`=รอบก่อน), `deltaDays`=จำนวนวัน before→after
 - `cableTieColor` = สีเคเบิ้ลไทล์รัดกล้าม (hex/ชื่อสี) — **1 กล่องใส่ปูได้หลายตัว** ใช้สีแยกว่าตัวไหนเป็นตัวไหน (ข้อ 2.2)
 - `currentFirmnessPct` = %ความแน่นเนื้อ (MEAT) หรือ **%ไข่ (EGG)** — frontend โชว์บนกล่อง (ข้อ 3)
 - `feedingNote` = พฤติกรรมการกิน (ไม่กินปลา/ไม่กินหอย/กินน้อย ...) โชว์หน้ากล่อง (ข้อ 4)
 - `lastCheckedAt` = วันเช็คไข่/เนื้อล่าสุด (ข้อ 3,8) — ถ้าบันทึกค่าวัด (weight/firmness) โดยไม่ส่งมา → auto = วันนี้; ใช้คิด due ของ Task `CRAB_CHECK`
 - **`GET /api/crabs/:id` คืน `history[]`** (ข้อ 8): `[{ id, zone('MEASURE'|'CLASSIFY'|'FEEDING'|'SOURCE'), snapshot(Json), recordedAt }]` เรียงใหม่→เก่า — `PATCH` บันทึก `CrabHistory` **เฉพาะโซนที่ค่าเปลี่ยนจริง**; แก้โซน MEASURE → ปิด Task `CRAB_CHECK` ของปูตัวนั้น
 - **gotcha:** ผูกปูเข้ากล่อง (`boxId`) → backend sync `CrabBox.status` (มีปูเป็นๆ ≥1 = OCCUPIED); **ไม่กันจำนวนปูต่อกล่องแล้ว** (เดิมกัน 1 ตัว/กล่อง)
+
+### Uploads — รูปภาพ (Cloudinary)
+| Method | Path | หมายเหตุ |
+|---|---|---|
+| POST | `/api/uploads/crab-image` | อัปโหลดรูป **multipart** (field `image`, ≤8MB, image/* เท่านั้น) → `{ url, publicId }` |
+
+- ใช้ signed upload ผ่าน backend (มี `CLOUDINARY_API_SECRET`) — FE ได้ `url`/`publicId` มาแล้วส่งต่อเป็น `measureImageUrl`/`measureImagePublicId` ตอน `PATCH/POST /api/crabs`
+- ถ้ายังไม่ตั้ง env `CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET` → คืน **503**
 
 ---
 
