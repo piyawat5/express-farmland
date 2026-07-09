@@ -7,11 +7,14 @@ import { ownerWhere, assertOwnership } from '../lib/scope';
 // ── โมดูล A: CrabSystem = ระบบน้ำ RAS 1 ชุด ───────────────────────────
 
 /** field Json ที่ nullable ต้องใช้ Prisma.DbNull แทน null ตรงๆ ไม่งั้น Prisma โยน error */
-function normalizeSystemData<T extends { sizeBuckets?: unknown }>(data: T): T {
-  if (data.sizeBuckets === null) {
-    return { ...data, sizeBuckets: Prisma.DbNull };
-  }
-  return data;
+function normalizeSystemData<T extends { sizeBuckets?: unknown; receiptSettings?: unknown }>(
+  data: T,
+): T {
+  const out: T = { ...data };
+  if (out.sizeBuckets === null) (out as { sizeBuckets?: unknown }).sizeBuckets = Prisma.DbNull;
+  if (out.receiptSettings === null)
+    (out as { receiptSettings?: unknown }).receiptSettings = Prisma.DbNull;
+  return out;
 }
 
 export function listSystems(user: AuthUser) {

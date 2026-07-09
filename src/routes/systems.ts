@@ -32,6 +32,17 @@ const systemBody = z.object({
     .array(z.object({ minPerKilo: z.number().positive(), maxPerKilo: z.number().positive() }))
     .nullable()
     .optional(), // ช่วงไซส์ (ตัวโล) สำหรับข้อความโพสต์ (ข้อ 5)
+  // ตั้งค่าใบเสร็จ/ใบเสนอราคาต่อระบบ (โลโก้/สี/ชื่อร้าน/หมายเหตุ/ลำดับบล็อก)
+  receiptSettings: z
+    .object({
+      shopName: z.string().max(120).nullable().optional(),
+      logoUrl: z.string().max(500).nullable().optional(),
+      color: z.string().max(32).nullable().optional(),
+      footerNote: z.string().max(1000).nullable().optional(),
+      blockOrder: z.array(z.string().max(40)).nullable().optional(),
+    })
+    .nullable()
+    .optional(),
   note: z.string().optional(),
 });
 

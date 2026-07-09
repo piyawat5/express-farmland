@@ -106,6 +106,8 @@ model CrabSystem {
   meatCheckDays Int? // ปูเนื้อครบกี่วันควรเช็คความแน่น
   // ช่วงไซส์ (ตัวโล) สำหรับสร้างข้อความโพสต์ขาย— เก็บ [{minPerKilo, maxPerKilo}] (ข้อ 5)
   sizeBuckets  Json?
+  // ตั้งค่าใบเสร็จ/ใบเสนอราคาต่อระบบ — { shopName, logoUrl, color, footerNote, blockOrder }
+  receiptSettings Json?
   note         String?      @db.Text
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt

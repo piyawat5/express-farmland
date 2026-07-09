@@ -4,6 +4,16 @@
 > อัปเดตทุกครั้งที่มี decision สำคัญ / สร้าง module ใหม่ / เปลี่ยน schema
 
 ## 👉 ทำต่อจากตรงนี้ (NEXT — session ใหม่อ่านตรงนี้ก่อน)
+### 🖼️ กดขยายรูปทุกที่ + สรุปรูปล่าสุด + ใบเสร็จคัสตอม + จองปู + แก้ UI (2026-07-09) — BE+FE typecheck + FE build ผ่าน, ⚠️ ต้อง `prisma migrate deploy` ก่อนรัน server
+แผน: `C:\Users\piyawat\.claude\plans\sleepy-humming-eagle.md`
+- **migration ใหม่ `phase16_receipt_settings`** (ยังไม่ apply): `CrabSystem.receiptSettings Json?` เก็บ `{shopName, logoUrl, color, footerNote, blockOrder}` — ⚠️ **ต้องรัน `npx prisma migrate deploy` ก่อน** ไม่งั้นทุก query `/systems` พัง(client select ฟิลด์ใหม่แล้ว); `normalizeSystemData` แปลง null→`Prisma.DbNull` (เหมือน sizeBuckets); zod ใน `routes/systems.ts` +`receiptSettings`
+- **ข้อ 1 (กดขยายรูปทุกที่):** `lib/imageZoom.ts` (`useImageZoom` singleton) + `components/ImageZoomOverlay.vue` (mount ใน `App.vue`); ต่อ `openZoom()` เข้า CrabsView (thumbnail ประวัติ/รูปล่าสุด/รูปแก้รอบ) + CrabCompare (เลิก dialog ในตัว)
+- **ข้อ 2 (สรุปรูปล่าสุด):** `lib/imageShare.ts` (`loadImage`/`urlToBlob`/`copyImageBlob`/`downloadBlob`/`shareBlob`); ProgressView เพิ่มแกลเลอรี `after.imageUrl` + ปุ่ม "สร้างรูปรวม" (canvas montage → PNG) + ก๊อปทีละรูป
+- **ข้อ 3 (ใบเสร็จคัสตอม, FE ใน CommerceView):** `buildDocMarkup` รื้อเป็น **map บล็อก** join ตาม `blockOrder`; สี=`var(--fd-accent)` set inline; โลโก้ upload ผ่าน `uploadApi.crabImage` + `html2canvas({useCORS:true})`; dialog "ตั้งค่าใบเสร็จ" (ชื่อร้าน/โลโก้/สี/หมายเหตุ/ลากสลับลำดับบล็อก native drag+ลูกศร) + พรีวิวสด (`zoom:0.5`); เก็บผ่าน `systemApi.update({receiptSettings})`
+- **ข้อ 5 (จองปูแทนขายทันที, FE ล้วน):** จอง = txn **SELL/CONFIRMED** (ฝัง `#ids` ใน note, ไม่แตะสถานะปู, ไม่ลง ledger); `reservedCrabIds` (Map จาก CONFIRMED SELL) → ตัดปูจองออกจาก candidate ของคนอื่น (ยกเว้นใบที่กำลังแก้ `editingTxnId`); ปุ่มในตาราง = **ยืนยันขาย** (`finalizeSale`: ปู→SOLD แบ่งราคาตามน้ำหนัก + txn→DONE ลง ledger) / **แก้ไขการจอง** / **ยกเลิกการจอง**; ไม่ยุ่งกับ `lockedForBuyerId` (ล็อกลูกค้าประจำแยกกัน)
+- **ข้อ 4:** (4.1) CalendarView override `--fc-list-event-hover-bg-color` เป็นสีธีม (dark hover ขาวทับตัวอักษรขาว); (4.2) เอา `onGridClick` (คลิกที่ว่างล้างกรอบเหลือง) ออกจาก CrabsView — ไฮไลต์ `box-recent` ยังอยู่
+- ⚠️ ยังไม่ทดสอบ server จริง (รอ apply migration) — โลโก้/montage ต้อง `CLOUDINARY_*` + CORS ของ Cloudinary
+
 ### 🖼️ รูปภาพประวัติ (Cloudinary) + เปรียบเทียบพัฒนาการปู before/after + chip scroll-x (2026-07-08) — BE+FE typecheck ผ่าน, รอทดสอบ server จริง
 แผน: `C:\Users\piyawat\.claude\plans\purring-zooming-nebula.md`
 - **ไม่ต้อง migrate DB** — รูปเก็บใน `CrabHistory.snapshot` (Json) โซน MEASURE ที่มีอยู่ (keys ใหม่ `imageUrl`/`imagePublicId`)
@@ -253,6 +263,14 @@ prisma/schema.prisma
 > ค่าตัวเลขจริง (min/max, ปริมาณสาร, รอบวัน) ให้ถามผู้ใช้ตอนทำ seed เพราะผู้ใช้ custom เอง
 
 ## Log การเปลี่ยนแปลง
+- **2026-07-09** — **กดขยายรูปทุกที่ + สรุปรูปล่าสุด + ใบเสร็จคัสตอม + จองปู + แก้ UI** (แผน `sleepy-humming-eagle.md`) — BE+FE typecheck + FE build ผ่าน, ยังไม่ apply migration/ทดสอบ server:
+  - **migration `phase16_receipt_settings`** (ยังไม่ apply): `CrabSystem.receiptSettings Json?`; `normalizeSystemData` + zod รองรับ; regenerate client แล้ว — ⚠️ ต้อง `prisma migrate deploy` ก่อนรัน server
+  - FE ใหม่: `lib/imageZoom.ts`, `components/ImageZoomOverlay.vue` (mount App.vue), `lib/imageShare.ts`
+  - **#1** กดขยายรูปทุกจุด (CrabsView 3 จุด + CrabCompare ใช้ overlay กลาง)
+  - **#2** ProgressView แกลเลอรีรูปล่าสุด + "สร้างรูปรวม" (canvas montage) + ก๊อปทีละรูป
+  - **#3** ใบเสร็จ CommerceView: `buildDocMarkup` เป็น map บล็อก (สลับลำดับได้), สี `--fd-accent`, โลโก้ (`useCORS:true`), dialog ตั้งค่า (ลากสลับ native + พรีวิว `zoom:0.5`), เก็บ `receiptSettings` ต่อระบบ
+  - **#4** (4.1) CalendarView `--fc-list-event-hover-bg-color` สีธีม; (4.2) เอา `onGridClick` ออก
+  - **#5** จองปู = txn SELL/CONFIRMED (ฝัง `#ids`), `reservedCrabIds` ตัด candidate คนอื่น, ปุ่มยืนยันขาย/แก้ไข/ยกเลิกการจอง; `finalizeSale` ปู→SOLD + txn→DONE
 - **2026-07-08** — **รูปภาพประวัติ (Cloudinary) + เปรียบเทียบพัฒนาการปู before/after + chip scroll-x** — BE+FE typecheck ผ่าน (ยังไม่ทดสอบ server จริง):
   - **ไม่ต้อง migrate** — เก็บ `imageUrl`/`imagePublicId` ใน `CrabHistory.snapshot` (Json) โซน MEASURE; deps ใหม่ `cloudinary`/`multer`/`@types/multer`; env `CLOUDINARY_*` (optional)
   - BE: `lib/cloudinary.ts` + `routes/uploads.ts` (`POST /uploads/crab-image` signed, ≤8MB) + `MulterError` ใน error handler; `crab.service` ผูกรูปเข้ารอบ MEASURE (มีรูป→บังคับรอบใหม่), `deleteCrabHistory` ลบรูป best-effort, `listCrabProgress` + `GET /crabs/progress`
