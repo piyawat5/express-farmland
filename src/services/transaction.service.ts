@@ -38,6 +38,8 @@ export type TxnFinancialInput = {
   pricePerUnit: number;
   costBasis?: number | null;
   crabId?: number | null;
+  // ยอดรวมที่กรอกจริง (ขายยกล็อต) — ถ้าส่งมาใช้ตรงๆ กันเพี้ยนจากปัด pricePerUnit แล้วคูณกลับ
+  totalPrice?: number | null;
 };
 
 export type TxnFinancials = {
@@ -57,7 +59,8 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 async function computeFinancials(input: TxnFinancialInput): Promise<TxnFinancials> {
   const qty = input.qty;
   const pricePerUnit = input.pricePerUnit;
-  const totalPrice = round2(pricePerUnit * qty);
+  // ถ้ากรอกยอดรวมมาเอง (ขายยกล็อต หารไม่ลงตัว) ใช้ตรงๆ — ไม่งั้นคำนวณ pricePerUnit × qty
+  const totalPrice = input.totalPrice != null ? round2(input.totalPrice) : round2(pricePerUnit * qty);
 
   let costBasis: number | null = null;
   if (input.kind === 'SELL') {
@@ -128,6 +131,7 @@ export type CreateTxnInput = {
   crabId?: number | null;
   qty?: number;
   pricePerUnit: number;
+  totalPrice?: number | null; // ยอดรวมยกล็อต (override) — ดู computeFinancials
   costBasis?: number | null;
   round?: number | null;
   occurredAt?: Date | null;
@@ -143,6 +147,7 @@ export async function createTransaction(user: AuthUser, input: CreateTxnInput) {
     kind: input.kind,
     qty,
     pricePerUnit: input.pricePerUnit,
+    totalPrice: input.totalPrice,
     costBasis: input.costBasis,
     crabId: input.crabId,
   });
@@ -187,8 +192,17 @@ export async function updateTransaction(id: number, user: AuthUser, input: Updat
   const crabId = input.crabId === undefined ? current.crabId : input.crabId;
   // costBasis: ถ้า client ส่งมา (รวม null = ล้างให้ดึงใหม่จากปู) ใช้ค่านั้น, ไม่ส่ง = ค่าเดิม
   const costBasis = input.costBasis === undefined ? dec(current.costBasis) : input.costBasis;
+  // totalPrice (ยอดรวมยกล็อต): ส่งมา → ใช้ตรงๆ; ไม่ส่งแต่แก้ราคา/จำนวน → คำนวณใหม่จาก pricePerUnit×qty;
+  //   ไม่ส่งและไม่แก้ราคา/จำนวน → คงยอดเดิม (กัน finalizeSale ที่แก้แค่ status ทำให้ยอดที่หารไม่ลงตัวเพี้ยน)
+  const priceOrQtyChanged = input.pricePerUnit !== undefined || input.qty !== undefined;
+  const totalPrice =
+    input.totalPrice !== undefined
+      ? input.totalPrice
+      : priceOrQtyChanged
+        ? undefined
+        : dec(current.totalPrice);
 
-  const fin = await computeFinancials({ kind, qty, pricePerUnit, costBasis, crabId });
+  const fin = await computeFinancials({ kind, qty, pricePerUnit, totalPrice, costBasis, crabId });
 
   const txn = await prisma.transaction.update({
     where: { id },

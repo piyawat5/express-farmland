@@ -91,6 +91,7 @@ const txnBody = z.object({
   crabId: z.number().int().positive().nullable().optional(),
   qty: z.number().int().positive().optional(),
   pricePerUnit: z.number().nonnegative(),
+  totalPrice: z.number().nonnegative().nullable().optional(), // ยอดรวมยกล็อต (ถ้าส่ง ใช้แทน pricePerUnit×qty)
   costBasis: z.number().nonnegative().nullable().optional(),
   round: z.number().int().positive().nullable().optional(),
   occurredAt: z.coerce.date().nullable().optional(),

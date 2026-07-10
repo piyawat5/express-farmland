@@ -4,9 +4,18 @@
 > อัปเดตทุกครั้งที่มี decision สำคัญ / สร้าง module ใหม่ / เปลี่ยน schema
 
 ## 👉 ทำต่อจากตรงนี้ (NEXT — session ใหม่อ่านตรงนี้ก่อน)
-### 🖼️ กดขยายรูปทุกที่ + สรุปรูปล่าสุด + ใบเสร็จคัสตอม + จองปู + แก้ UI (2026-07-09) — BE+FE typecheck + FE build ผ่าน, ⚠️ ต้อง `prisma migrate deploy` ก่อนรัน server
+### 🖼️ รอบฟีดแบ็ค: ย่อ/ขยายแกลเลอรี + แก้ก๊อปรูป Safari + รูปรวมปูที่จอง + แบ่งหน้าประวัติน้ำ (2026-07-10) — FE-only, typecheck + build ผ่าน, ไม่ต้อง migrate
+- **ไฟล์ใหม่ (FE):** `lib/imageMontage.ts` — `buildMontage(items, heading)` แยกลอจิกวาดรูปรวมออกจาก ProgressView (drawCover/clipText + คำกำกับ 2 บรรทัด title+sub) คืน `{dataUrl, blob}`; ใช้ร่วม ProgressView + CommerceView
+- **ข้อ 1.1 (ProgressView):** ส่วน "รูปปูล่าสุดทั้งหมด" ย่อ/ขยายได้ (`galleryOpen`, chevron + คลิกหัวข้อ, `v-expand-transition`) — **บนมือถือเริ่มแบบย่อ** (`ref(!mobile.value)`) กันต้อง scroll ยาวกว่าจะถึง section เทียบปู
+- **ข้อ 1.2 (Safari ก๊อปรูปเดี่ยวไม่ได้):** root cause = `copyOne` เดิม `await urlToBlob()` (fetch) **ก่อน** `clipboard.write` → Safari หลุด user-gesture; แก้ด้วย `imageShare.copyImageFromUrl(url)` — ส่ง `Promise<Blob>` เข้า `ClipboardItem` แบบ synchronous (Safari/Chrome รองรับ) + fallback แบบเดิม; **เก็บปุ่มก๊อปไว้** (ไม่ต้องเอาออก)
+- **ข้อ 2.1–2.3 (CommerceView รูปรวมปูที่จอง):** โหลดรูป+%ไข่ lazy จาก `crabApi.progress` (`ensureProgress` Map, reset ใน `loadAll`); ปุ่ม "รูปรวม" 2 จุด = (a) ในไดอะล็อกจองปู แถวสรุปที่เลือก (`makePickedMontage`, ไม่เบียด footer) (b) ไอคอนในแถว listing ของการจอง (`makeTxnMontage`); คำกำกับมี **ไซส์ + ไข่/เนื้อ %** (ข้อ 2.3); dialog แยก + ดาวน์โหลด/ก๊อป/แชร์
+- **ข้อ 2.4 (เลขที่ใบเสร็จ):** เดิม `openTxnDoc` (เปิดจาก listing) ใช้ `QT-00019` (id pad5) ต่างจากตอนพรีวิว `QT-YYYYMMDD-NNN` → unify ให้ listing เป็น `QT-<YYYYMMDD ของ occurredAt>-<id pad3>` (คงที่ต่อรายการ ไม่สุ่มใหม่)
+- **ข้อ 3.1 (WaterView):** ประวัติการวัดแบ่งหน้า client-side (`historyPage`/`historyPageSize` เลือก 5/10/20/50, `pagedTests` เก็บ index สัมบูรณ์ให้ "เทียบรอบก่อน" ข้ามหน้าถูก, `v-pagination`); โหลด `take: 200` (จาก 10)
+- ✅ migration `phase16_receipt_settings` จากรอบก่อน **apply ลง DB จริงแล้ว** (เช็ค 2026-07-10: `prisma migrate status` = up to date, 11 migrations); รอบนี้ FE-only ไม่เพิ่ม migration
+
+### 🖼️ กดขยายรูปทุกที่ + สรุปรูปล่าสุด + ใบเสร็จคัสตอม + จองปู + แก้ UI (2026-07-09) — BE+FE typecheck + FE build ผ่าน, ✅ migration apply แล้ว (เช็ค 2026-07-10)
 แผน: `C:\Users\piyawat\.claude\plans\sleepy-humming-eagle.md`
-- **migration ใหม่ `phase16_receipt_settings`** (ยังไม่ apply): `CrabSystem.receiptSettings Json?` เก็บ `{shopName, logoUrl, color, footerNote, blockOrder}` — ⚠️ **ต้องรัน `npx prisma migrate deploy` ก่อน** ไม่งั้นทุก query `/systems` พัง(client select ฟิลด์ใหม่แล้ว); `normalizeSystemData` แปลง null→`Prisma.DbNull` (เหมือน sizeBuckets); zod ใน `routes/systems.ts` +`receiptSettings`
+- **migration ใหม่ `phase16_receipt_settings`** ✅ **apply ลง DB จริงแล้ว** (เช็ค 2026-07-10 `prisma migrate status` = up to date): `CrabSystem.receiptSettings Json?` เก็บ `{shopName, logoUrl, color, footerNote, blockOrder}`; `normalizeSystemData` แปลง null→`Prisma.DbNull` (เหมือน sizeBuckets); zod ใน `routes/systems.ts` +`receiptSettings`
 - **ข้อ 1 (กดขยายรูปทุกที่):** `lib/imageZoom.ts` (`useImageZoom` singleton) + `components/ImageZoomOverlay.vue` (mount ใน `App.vue`); ต่อ `openZoom()` เข้า CrabsView (thumbnail ประวัติ/รูปล่าสุด/รูปแก้รอบ) + CrabCompare (เลิก dialog ในตัว)
 - **ข้อ 2 (สรุปรูปล่าสุด):** `lib/imageShare.ts` (`loadImage`/`urlToBlob`/`copyImageBlob`/`downloadBlob`/`shareBlob`); ProgressView เพิ่มแกลเลอรี `after.imageUrl` + ปุ่ม "สร้างรูปรวม" (canvas montage → PNG) + ก๊อปทีละรูป
 - **ข้อ 3 (ใบเสร็จคัสตอม, FE ใน CommerceView):** `buildDocMarkup` รื้อเป็น **map บล็อก** join ตาม `blockOrder`; สี=`var(--fd-accent)` set inline; โลโก้ upload ผ่าน `uploadApi.crabImage` + `html2canvas({useCORS:true})`; dialog "ตั้งค่าใบเสร็จ" (ชื่อร้าน/โลโก้/สี/หมายเหตุ/ลากสลับลำดับบล็อก native drag+ลูกศร) + พรีวิวสด (`zoom:0.5`); เก็บผ่าน `systemApi.update({receiptSettings})`
