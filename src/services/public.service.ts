@@ -16,6 +16,7 @@ type ShopSettings = {
 };
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+const DAY_MS = 1000 * 60 * 60 * 24;
 
 export async function getPublicShop(slug: string) {
   const system = await prisma.crabSystem.findUnique({ where: { publicSlug: slug } });
@@ -28,6 +29,10 @@ export async function getPublicShop(slug: string) {
   const crabs = await prisma.crab.findMany({
     where: { systemId: system.id, status: 'READY' },
     orderBy: [{ type: 'asc' }, { weightG: 'desc' }],
+    // ดึงรอบวัด MEASURE เพื่อหยิบรูปปูล่าสุด (เก็บใน snapshot.imageUrl) มาโชว์หน้าร้าน
+    include: {
+      history: { where: { zone: 'MEASURE' }, orderBy: { recordedAt: 'desc' } },
+    },
   });
 
   // ตัดปูที่ถูกจอง (SELL/CONFIRMED ของเจ้าของระบบ)
@@ -50,6 +55,16 @@ export async function getPublicShop(slug: string) {
     .filter((c) => !reserved.has(c.id))
     .map((c) => {
       const weightG = c.weightG == null ? null : Number(c.weightG);
+      // รูปล่าสุด = imageUrl ตัวแรกที่ไม่ว่างจากรอบ MEASURE (เรียงใหม่→เก่าแล้ว)
+      const imageUrl =
+        c.history
+          .map((h) => (h.snapshot as { imageUrl?: string | null } | null)?.imageUrl ?? null)
+          .find((u) => u) ?? null;
+      // จำนวนวันเลี้ยง = นับจากวันรับปูเข้า (purchaseDate) ถึงวันนี้
+      const daysRaised =
+        c.purchaseDate == null
+          ? null
+          : Math.max(0, Math.floor((Date.now() - c.purchaseDate.getTime()) / DAY_MS));
       return {
         id: c.id,
         code: c.code,
@@ -58,6 +73,8 @@ export async function getPublicShop(slug: string) {
         firmnessPct: c.currentFirmnessPct,
         cableTieColor: c.cableTieColor,
         price: priceOf(c.type, weightG),
+        imageUrl,
+        daysRaised,
       };
     });
 

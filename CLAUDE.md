@@ -4,6 +4,20 @@
 > อัปเดตทุกครั้งที่มี decision สำคัญ / สร้าง module ใหม่ / เปลี่ยน schema
 
 ## 👉 ทำต่อจากตรงนี้ (NEXT — session ใหม่อ่านตรงนี้ก่อน)
+### 🛍️ ยกเครื่องหน้าร้าน public (QR) — สวยขึ้น + กรองละเอียด + รูป/ขีด/วันเลี้ยง (2026-07-15) — BE+FE typecheck + FE build ผ่าน, ไม่ต้อง migrate
+- **BE `public.service.getPublicShop`:** เพิ่ม 2 ฟิลด์ต่อปูใน response — `imageUrl` (รูปล่าสุดจากรอบ MEASURE: `include history where zone=MEASURE orderBy recordedAt desc` แล้วหยิบ `snapshot.imageUrl` ตัวแรกที่ไม่ว่าง) + `daysRaised` (นับจาก `purchaseDate` ถึงวันนี้). **ไม่ต้อง migrate** (อ่านจากข้อมูลเดิม); type FE `PublicShopCrab` เพิ่ม `imageUrl`/`daysRaised`
+- **FE `PublicShopView.vue` รื้อใหม่หมด** (8 ข้อฟีดแบ็ค):
+  - (1/6) ดีไซน์ใหม่ทันสมัย: header gradient + การ์ดปูมีรูป (aspect 4:3) + badge ชนิด + จุดสีเคเบิ้ลไทล์ + hover lift + overlay ติ๊กถูกตอนเลือก + cart bar โค้งมน
+  - (2) **ระบบกรองละเอียด:** chip ชนิด (ทั้งหมด/ปูไข่/ปูเนื้อ + นับจำนวน), เมนู sort (ขนาด/ราคา/แน่น/วันเลี้ยง), panel ขั้นสูง (range slider ขีด, slider %ความแน่นขั้นต่ำ, range slider ราคา, toggle เฉพาะมีรูป) + badge นับตัวกรอง active + ปุ่มล้างตัวกรอง
+  - (3) รูปปู: `hasImage()` + `@error` fallback → ป้าย "ไม่มีรูปภาพ" (พื้นลายทาง)
+  - (4) เปลี่ยน "ตัวโล" → "ขีด" (`khitLabel`) เป็นเลขใหญ่บนการ์ด (ลบ `perKilo`)
+  - (5) โชว์ "เลี้ยง N วัน" เป็น pill
+  - (7) เอา "สอบถามราคา"/"รอสอบถามราคา" ออก — ไม่มีราคาก็ไม่แสดงบรรทัดราคา
+  - (8) ปุ่ม "เลือกทั้งหมด (N)" / "ยกเลิกที่เลือก" ตามผลกรองปัจจุบัน (`toggleSelectAllFiltered`)
+  - คงเดิม: dialog "ให้ร้านเลือกให้" (กำหนดจำนวน), ยืนยัน→ใบเสร็จรูป (html2canvas)
+- ⏭️ **ค้างไว้พรุ่งนี้ (ผู้ใช้สั่ง):** ปูที่ถูกจองแล้ว ให้ขึ้น status "ถูกจองแล้ว" + สี disable ที่ box (ตอนนี้ปูจอง = ถูกตัดออกจากหน้าร้านทั้งตัว ยังไม่โชว์แบบ disabled)
+- ⚠️ ยังไม่ทดสอบใน browser จริง (typecheck+build ผ่าน)
+
 ### 🎨 navbar ธีมเทศกาล + แดชบอร์ดกราฟ/อากาศ + จองปูซิงค์ + หน้าร้าน public QR (2026-07-14) — BE+FE typecheck + FE build ผ่าน, ✅ migration apply แล้ว, smoke test public route ผ่าน
 แผน: `C:\Users\piyawat\.claude\plans\cryptic-gliding-cook.md`
 - **migration ใหม่ `phase17_weather_public_feeding`** ✅ apply ลง DB จริงแล้ว (smoke test เห็นคอลัมน์ใหม่ใน SQL): `CrabSystem.weatherLat/Lng/weatherPlace Float?/String?` (การ์ดอากาศ), `CrabSystem.publicEnabled Boolean @default(false)` + `publicSlug String? @unique` (หน้าร้าน public), `Crab.lastFedAt DateTime?` (ให้อาหารล่าสุด); **ราคา/กก. เก็บใน `receiptSettings` JSON** (`priceEgg`/`priceMeat` — ไม่ต้อง migrate); zod ใน `routes/systems.ts` + `system.service.updateSystem` gen `publicSlug` (randomBytes) ตอนเปิดร้านครั้งแรก
