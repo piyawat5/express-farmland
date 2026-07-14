@@ -277,6 +277,34 @@ export async function deleteCrabHistory(id: number, user: AuthUser) {
 }
 
 /**
+ * บันทึก "ให้อาหารแล้ววันนี้" เป็น event (ข้อ 3.6) — แยกจากการแก้ field feedingNote
+ * ปัญหาเดิม: ถ้าเมื่อวานกินปกติ วันนี้ก็กินปกติ → diff มองว่าไม่เปลี่ยน → ไม่บันทึก
+ * ทางแก้: endpoint นี้ insert CrabHistory โซน FEEDING "เสมอ" แม้ feedingNote ไม่เปลี่ยน
+ * + เดิน lastFedAt ให้กล่องปูโชว์ "ให้อาหารล่าสุด" ได้ (ไม่แตะโซน MEASURE/น้ำหนัก/%)
+ */
+export async function logFeeding(id: number, user: AuthUser) {
+  const crab = await prisma.crab.findUnique({
+    where: { id },
+    include: { system: { select: { ownerId: true } } },
+  });
+  if (!crab) throw notFound('ไม่พบปูตัวนี้');
+  assertOwnership(user, crab.system.ownerId);
+
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.crabHistory.create({
+      data: {
+        crabId: id,
+        zone: 'FEEDING',
+        snapshot: { feedingNote: crab.feedingNote ?? null, fedAt: now.toISOString() },
+      },
+    }),
+    prisma.crab.update({ where: { id }, data: { lastFedAt: now } }),
+  ]);
+  return prisma.crab.findUnique({ where: { id } });
+}
+
+/**
  * แก้ไข "รอบ" ในประวัติ 1 แถว (ข้อ 1) — แก้ตัวเลข/วันที่/รูป ของรอบเก่าได้โดยไม่สร้างรอบซ้ำ
  * - ค่าตัวเลข/วันที่แก้ได้เฉพาะโซน MEASURE
  * - ถ้าเป็นรอบ MEASURE "ล่าสุด" → sync ค่าปัจจุบันของปู (weightG/%/วันเช็ค) ให้ตรง (โชว์บนกล่อง)

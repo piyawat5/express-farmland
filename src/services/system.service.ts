@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { notFound } from '../lib/http';
@@ -55,9 +56,23 @@ export async function createSystem(data: Prisma.CrabSystemUncheckedCreateInput) 
   return prisma.crabSystem.create({ data: normalizeSystemData({ ...data, ownerId }) });
 }
 
+/** gen โทเคน slug สำหรับหน้าร้าน public ที่ไม่ซ้ำ (ข้อ 5) */
+async function generateUniqueSlug(): Promise<string> {
+  for (;;) {
+    const slug = randomBytes(6).toString('hex'); // 12 ตัวอักษร hex
+    const clash = await prisma.crabSystem.count({ where: { publicSlug: slug } });
+    if (clash === 0) return slug;
+  }
+}
+
 export async function updateSystem(id: number, data: Prisma.CrabSystemUncheckedUpdateInput) {
-  await getSystem(id); // โยน 404 ถ้าไม่มี
-  return prisma.crabSystem.update({ where: { id }, data: normalizeSystemData(data) });
+  const current = await getSystem(id); // โยน 404 ถ้าไม่มี
+  const patch = normalizeSystemData(data);
+  // เปิดร้าน public ครั้งแรก → gen slug ไม่ซ้ำ (ข้อ 5) — ปิดแล้วเปิดใหม่ใช้ slug เดิม (QR ไม่เปลี่ยน)
+  if (patch.publicEnabled === true && !current.publicSlug) {
+    (patch as { publicSlug?: string }).publicSlug = await generateUniqueSlug();
+  }
+  return prisma.crabSystem.update({ where: { id }, data: patch });
 }
 
 export async function deleteSystem(id: number) {

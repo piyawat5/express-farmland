@@ -32,7 +32,7 @@ const systemBody = z.object({
     .array(z.object({ minPerKilo: z.number().positive(), maxPerKilo: z.number().positive() }))
     .nullable()
     .optional(), // ช่วงไซส์ (ตัวโล) สำหรับข้อความโพสต์ (ข้อ 5)
-  // ตั้งค่าใบเสร็จ/ใบเสนอราคาต่อระบบ (โลโก้/สี/ชื่อร้าน/หมายเหตุ/ลำดับบล็อก)
+  // ตั้งค่าใบเสร็จ/ใบเสนอราคาต่อระบบ (โลโก้/สี/ชื่อร้าน/หมายเหตุ/ลำดับบล็อก + ราคา/กก. หน้าร้าน ข้อ 5)
   receiptSettings: z
     .object({
       shopName: z.string().max(120).nullable().optional(),
@@ -40,9 +40,17 @@ const systemBody = z.object({
       color: z.string().max(32).nullable().optional(),
       footerNote: z.string().max(1000).nullable().optional(),
       blockOrder: z.array(z.string().max(40)).nullable().optional(),
+      priceEgg: z.number().nonnegative().nullable().optional(), // ราคา/กก. ปูไข่ (หน้าร้าน public)
+      priceMeat: z.number().nonnegative().nullable().optional(), // ราคา/กก. ปูเนื้อ
     })
     .nullable()
     .optional(),
+  // พิกัดการ์ดสภาพอากาศ (ข้อ 2.2)
+  weatherLat: z.number().min(-90).max(90).nullable().optional(),
+  weatherLng: z.number().min(-180).max(180).nullable().optional(),
+  weatherPlace: z.string().max(120).nullable().optional(),
+  // หน้าร้าน public (ข้อ 5) — publicSlug จัดการเองในบริการตอนเปิดร้าน
+  publicEnabled: z.boolean().optional(),
   note: z.string().optional(),
 });
 

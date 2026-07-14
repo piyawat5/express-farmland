@@ -4,6 +4,19 @@
 > อัปเดตทุกครั้งที่มี decision สำคัญ / สร้าง module ใหม่ / เปลี่ยน schema
 
 ## 👉 ทำต่อจากตรงนี้ (NEXT — session ใหม่อ่านตรงนี้ก่อน)
+### 🎨 navbar ธีมเทศกาล + แดชบอร์ดกราฟ/อากาศ + จองปูซิงค์ + หน้าร้าน public QR (2026-07-14) — BE+FE typecheck + FE build ผ่าน, ✅ migration apply แล้ว, smoke test public route ผ่าน
+แผน: `C:\Users\piyawat\.claude\plans\cryptic-gliding-cook.md`
+- **migration ใหม่ `phase17_weather_public_feeding`** ✅ apply ลง DB จริงแล้ว (smoke test เห็นคอลัมน์ใหม่ใน SQL): `CrabSystem.weatherLat/Lng/weatherPlace Float?/String?` (การ์ดอากาศ), `CrabSystem.publicEnabled Boolean @default(false)` + `publicSlug String? @unique` (หน้าร้าน public), `Crab.lastFedAt DateTime?` (ให้อาหารล่าสุด); **ราคา/กก. เก็บใน `receiptSettings` JSON** (`priceEgg`/`priceMeat` — ไม่ต้อง migrate); zod ใน `routes/systems.ts` + `system.service.updateSystem` gen `publicSlug` (randomBytes) ตอนเปิดร้านครั้งแรก
+- **ข้อ 2.3 (บั๊กรายจ่าย=0):** root cause = รายการ manual ใน LedgerView มี `systemId=null` แต่แดชบอร์ดกรอง `systemId` → ตัดทิ้ง; แก้ `dashboard.service.financeSummary` ให้ `OR:[{systemId},{systemId:null}]` เมื่อมี systemId + LedgerView เพิ่ม dropdown เลือกระบบ (default ระบบปัจจุบัน)
+- **ข้อ 1 (navbar):** ระบบธีมใหม่ `plugins/themes.ts` (5 family × light/dark = 10 ธีม: base/cny/songkran/christmas/valentine) + `lib/theme.ts` (family+mode แยกกัน, localStorage `themeFamily`/`themeMode`); navbar ไล่เฉด `--fd-bar` ต่อธีม (global.css) + เมนู 🎨 เลือกธีม + ปุ่ม dark/light เดิม
+- **ข้อ 2 (dashboard):** เพิ่ม deps `apexcharts`+`vue3-apexcharts`; รื้อ `DashboardView` = KPI การ์ด + area(รายรับจ่ายรายเดือน)+donut(รายจ่ายหมวด)+bar(สต็อก) + `WeatherCard.vue` (Open-Meteo ฟรีไม่ต้องคีย์, พิกัดตั้งใน dialog + geolocation, default กรุงเทพฯ)
+- **ข้อ 3 (หน้าปู):** `lib/reservations.ts` (FE+BE) parse `#ids` จาก SELL/CONFIRMED; CrabsView โหลด txn จอง → ป้าย "จอง" ม่วง + chip "ถูกจอง" + แดชบอร์ดนับจอง; box crab-row เป็น **2 บรรทัด** (น้ำหนักไม่ถูกบีบ) ชิดซ้าย; ป้ายการกินเป็น badge สี (🐟✕/🦪✕/กินน้อย/กิน✓) แทนไอคอนช้อนส้อมโหลๆ; พร้อมขาย=pill เขียว; **ให้อาหาร log** = `POST /crabs/:id/feeding-log` (`crab.service.logFeeding` insert FEEDING history เสมอ + set `lastFedAt` ไม่แตะ diff MEASURE) + ปุ่ม "ให้อาหารแล้ววันนี้"
+- **ข้อ 4.1 (tasks มือถือ):** ซ่อนปุ่ม append บนมือถือ (แตะแถวเปิด popup ที่มีปุ่มครบ) + ลด font หัวข้อ
+- **ข้อ 5 (หน้าร้าน public):** refactor ใบเสร็จออกจาก CommerceView → `lib/receipt.ts` (buildDocMarkup/types) + `styles/receipt.css` (import global); BE `routes/public.ts` (mount ก่อน requireAuth) + `services/public.service.getPublicShop(slug)` คืนปู READY ที่ยังไม่จอง + ราคา (ตัดต้นทุน/กำไร); FE route `/shop/:slug` (public) + `PublicShopView.vue` (เมนูชาบู เลือกปู/กำหนดสเปก → ตะกร้า → ใบเสร็จ html2canvas ก๊อป/ดาวน์โหลด); QR + toggle เปิดร้าน + ราคา/กก. ในไดอะล็อกตั้งค่าใบเสร็จ (dep `qrcode`); **ยืนยัน = ใบเสร็จรูปเท่านั้น ยังไม่เขียน order/notify** (เผื่อ `POST /public/shop/:slug/order` อนาคต)
+- **ข้อ 6 (config inline):** พิกัดอากาศ (การ์ด weather), ธีม (navbar), เปิดร้าน+QR+ราคา/กก. (Commerce), systemId ledger (LedgerView)
+- ⚠️ ยังไม่ทดสอบใน browser จริง (typecheck+build+smoke test BE ผ่าน) — รอผู้ใช้เปิดร้าน+ตั้งราคา/กก.+ทดสอบแสกน QR; ต้องมี `CLOUDINARY_*` ถ้าใช้โลโก้ร้าน
+
+
 ### 🖼️ รอบฟีดแบ็ค: ย่อ/ขยายแกลเลอรี + แก้ก๊อปรูป Safari + รูปรวมปูที่จอง + แบ่งหน้าประวัติน้ำ (2026-07-10) — FE-only, typecheck + build ผ่าน, ไม่ต้อง migrate
 - **ไฟล์ใหม่ (FE):** `lib/imageMontage.ts` — `buildMontage(items, heading)` แยกลอจิกวาดรูปรวมออกจาก ProgressView (drawCover/clipText + คำกำกับ 2 บรรทัด title+sub) คืน `{dataUrl, blob}`; ใช้ร่วม ProgressView + CommerceView
 - **ข้อ 1.1 (ProgressView):** ส่วน "รูปปูล่าสุดทั้งหมด" ย่อ/ขยายได้ (`galleryOpen`, chevron + คลิกหัวข้อ, `v-expand-transition`) — **บนมือถือเริ่มแบบย่อ** (`ref(!mobile.value)`) กันต้อง scroll ยาวกว่าจะถึง section เทียบปู

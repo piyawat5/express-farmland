@@ -22,8 +22,18 @@ function dateRange(from?: Date, to?: Date): Prisma.DateTimeFilter | undefined {
 export type FinanceQuery = { systemId?: number; from?: Date; to?: Date };
 
 export async function financeSummary(user: AuthUser, { systemId, from, to }: FinanceQuery) {
+  // เมื่อกรองตามระบบ ต้องรวมรายการที่ "ไม่ผูกระบบ" (systemId=null เช่น ค่าอาหาร/สาร
+  // ที่ลงผ่านสมุดบัญชี) ด้วย — ไม่งั้นรายจ่ายรวมบนแดชบอร์ดจะเป็น 0 เสมอ
+  // (เลียนแบบ pattern OR ของ pendingTasks ใน overview)
+  const where: Prisma.LedgerEntryWhereInput = {
+    ...ownerWhere(user),
+    occurredAt: dateRange(from, to),
+  };
+  if (systemId != null) {
+    where.OR = [{ systemId }, { systemId: null }];
+  }
   const entries = await prisma.ledgerEntry.findMany({
-    where: { ...ownerWhere(user), systemId, occurredAt: dateRange(from, to) },
+    where,
     orderBy: { occurredAt: 'asc' },
   });
 

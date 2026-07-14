@@ -151,4 +151,14 @@ router.delete(
   }),
 );
 
+// บันทึก "ให้อาหารแล้ววันนี้" (ข้อ 3.6) — log event เสมอ แม้ feedingNote ไม่เปลี่ยน
+router.post(
+  '/:id/feeding-log',
+  validate({ params: idParam }),
+  requireSystemEdit(systemIdFromCrab),
+  asyncHandler(async (req, res) => {
+    res.json(serialize(await svc.logFeeding(Number(req.params.id), req.user!)));
+  }),
+);
+
 export default router;

@@ -106,8 +106,15 @@ model CrabSystem {
   meatCheckDays Int? // ปูเนื้อครบกี่วันควรเช็คความแน่น
   // ช่วงไซส์ (ตัวโล) สำหรับสร้างข้อความโพสต์ขาย— เก็บ [{minPerKilo, maxPerKilo}] (ข้อ 5)
   sizeBuckets  Json?
-  // ตั้งค่าใบเสร็จ/ใบเสนอราคาต่อระบบ — { shopName, logoUrl, color, footerNote, blockOrder }
+  // ตั้งค่าใบเสร็จ/ใบเสนอราคาต่อระบบ — { shopName, logoUrl, color, footerNote, blockOrder, priceEgg, priceMeat }
   receiptSettings Json?
+  // พิกัดสำหรับการ์ดสภาพอากาศบนแดชบอร์ด (Open-Meteo) — ข้อ 2.2
+  weatherLat   Float?
+  weatherLng   Float?
+  weatherPlace String? // ชื่อสถานที่ที่แสดง เช่น "สมุทรสาคร"
+  // หน้าร้าน public (QR) — ข้อ 5: publicEnabled=เปิดร้าน, publicSlug=โทเคนใน URL /shop/:slug
+  publicEnabled Boolean @default(false)
+  publicSlug    String? @unique
   note         String?      @db.Text
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
@@ -186,6 +193,7 @@ model Crab {
   // พฤติกรรมการกิน (ไม่กินปลา/ไม่กินหอย/กินน้อย ...) โชว์หน้ากล่อง (ข้อ 4)
   feedingNote String?  @db.Text
   lastCheckedAt DateTime? // วันที่เช็คไข่/เนื้อล่าสุด — ใช้คิด due ของ CRAB_CHECK (ข้อ 3, 8)
+  lastFedAt   DateTime? // ให้อาหารล่าสุด — บันทึก event ได้แม้ค่าไม่เปลี่ยน (ข้อ 3.6)
 
   // ที่มา / ปลายทาง
   sourceSeller     Contact? @relation("CrabSeller", fields: [sourceSellerId], references: [id])

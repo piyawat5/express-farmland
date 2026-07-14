@@ -11,6 +11,7 @@ import { contactRouter, transactionRouter, outreachRouter } from './commerce';
 import { ledgerRouter, dashboardRouter } from './finance';
 import inventoryRoutes from './inventory';
 import uploadRoutes from './uploads';
+import publicRoutes from './public';
 
 const api = Router();
 
@@ -18,6 +19,7 @@ const api = Router();
 api.use(healthRoutes);
 api.use('/auth', authRoutes); // register/login/refresh — public; /me มี requireAuth ในตัว
 api.use('/scheduler', schedulerRouter); // ป้องกันด้วย x-scheduler-secret (Plesk cron) — ไม่ใช้ JWT
+api.use('/public', publicRoutes); // หน้าร้าน public (ข้อ 5) — /public/shop/:slug
 
 // ── ทุก endpoint ใต้จากนี้ต้อง login ──────────────────────────────────
 api.use(requireAuth);
