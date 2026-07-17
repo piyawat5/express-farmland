@@ -27,7 +27,7 @@ export async function getPublicShop(slug: string) {
   const priceMeat = typeof settings.priceMeat === 'number' ? settings.priceMeat : null;
 
   const crabs = await prisma.crab.findMany({
-    where: { systemId: system.id, status: 'READY' },
+    where: { systemId: system.id, status: 'READY', deletedAt: null }, // ข้อ 4.3: ไม่โชว์ปูที่ถูกลบ
     orderBy: [{ type: 'asc' }, { weightG: 'desc' }],
     // ดึงรอบวัด MEASURE เพื่อหยิบรูปปูล่าสุด (เก็บใน snapshot.imageUrl) มาโชว์หน้าร้าน
     include: {

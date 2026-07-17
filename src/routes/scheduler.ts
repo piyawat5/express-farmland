@@ -119,6 +119,28 @@ reminderRuleRouter.delete(
 // ── /tasks — งานจริง (อ่าน + เปลี่ยนสถานะ manual + บังคับส่งเตือน) ──────
 export const taskRouter = Router();
 
+// ข้อ 5.4: สร้าง "งานเตือนครั้งเดียว" — กรอกข้อความ + วันครบกำหนดเอง (ไม่มีประเภท/รอบ)
+taskRouter.post(
+  '/',
+  validate({
+    body: z.object({
+      title: z.string().min(1),
+      dueAt: z.string().datetime(),
+      systemId: z.number().int().positive().nullable().optional(),
+      detail: z.string().nullable().optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const created = await tasks.createManualTask(req.user!, {
+      title: req.body.title,
+      dueAt: new Date(req.body.dueAt),
+      systemId: req.body.systemId ?? null,
+      detail: req.body.detail ?? null,
+    });
+    res.status(201).json(serialize(created));
+  }),
+);
+
 taskRouter.get(
   '/',
   validate({
@@ -162,9 +184,10 @@ taskRouter.patch(
 // งานวัดน้ำ/ปรุงน้ำ/ของใกล้หมด จะถูกบล็อก (ต้องปิดจากการบันทึกข้อมูลจริง)
 taskRouter.post(
   '/:id/complete',
-  validate({ params: idParam }),
+  validate({ params: idParam, body: z.object({ doneAt: z.string().datetime().optional() }).optional() }),
   asyncHandler(async (req, res) => {
-    res.json(serialize(await tasks.completeTaskManually(Number(req.params.id), req.user!)));
+    const doneAt = req.body?.doneAt ? new Date(req.body.doneAt) : undefined;
+    res.json(serialize(await tasks.completeTaskManually(Number(req.params.id), req.user!, doneAt)));
   }),
 );
 

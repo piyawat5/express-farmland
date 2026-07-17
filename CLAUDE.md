@@ -4,6 +4,17 @@
 > อัปเดตทุกครั้งที่มี decision สำคัญ / สร้าง module ใหม่ / เปลี่ยน schema
 
 ## 👉 ทำต่อจากตรงนี้ (NEXT — session ใหม่อ่านตรงนี้ก่อน)
+### 🧹 รอบปรับ UI 12 หมวด + soft delete ปู + ปิดงานย้อนหลัง (2026-07-17) — BE+FE typecheck + FE build ผ่าน, ✅ migration apply แล้ว
+- ✅ **migration `phase18_crab_soft_delete` apply ลง DB จริงแล้ว** (2026-07-17): `ALTER TABLE Crab ADD deletedAt DATETIME(3) NULL` + index `(systemId, deletedAt)`; client regenerate แล้ว
+- **ข้อ 4.3 soft delete ปู:** `Crab.deletedAt`; `deleteCrab` เปลี่ยนเป็น set `deletedAt=now` (ไม่ลบจริง) + `freeBoxIfEmpty`; ทุก query ปูปกติกรอง `deletedAt: null` (`listCrabs`/`listCrabProgress`/`exportCrabsCsv`/`public.getPublicShop`/`dashboard` crab groupBy+sold); **ใหม่ `listCrabLog` + `GET /crabs/log`** (คืนปูทุกตัวรวมขาย/ลบ + box/buyer/history); **FE หน้าใหม่ `CrabLogView.vue` route `/crab-log` group care "ประวัติปูทั้งหมด"** (ตาราง + dialog log แยกโซน + toggle แสดงปูที่ถูกลบ)
+- **ข้อ 6.5 ปิดงานย้อนหลัง + รอบถัดไปนับจากวันปิด:** `completeTaskManually(id,user,doneAt?)` — set `completedAt=doneAt` + ถ้างานมาจากกฎ recompute `rule.nextRunAt = computeNextRunAt(rule, doneAt)` (นับต่อจากวันปิดจริง); `POST /tasks/:id/complete` รับ body `{doneAt?}`; **ใหม่ `createManualTask` + `POST /tasks`** (งานเตือนครั้งเดียว type CUSTOM, ข้อ 5.4); calendar โชว์งาน DONE ตาม `completedAt`; TasksView มี date-picker "ปิดงานเมื่อวันที่"
+- **ข้อ 5 Calendar:** เอาเวลาออก (`displayEventTime:false`), ชื่ออย่างเดียว (ตัด typeLabel), ปุ่ม "แจ้งเตือนตามรอบ"(→`/reminders?create=1`)+"เตือนครั้งเดียว"(dialog+`dateClick`), ไฮไลต์วันนี้ใน list, เอาปุ่ม today ออก, list ซ่อนวันที่ผ่านแล้ว (filter ตาม `currentView` จาก `datesSet`)
+- **ข้อ 2 freeze คอลัมน์แรกทุกตาราง:** `.freeze-first` ใน global.css (sticky left + bg surface) ใส่ทุก v-table หลัก
+- **ข้อ 8 navbar:** badge งานค้าง animate (`.badge-pulse`), ย้ายธีม/โหมดมืดเข้า popover โปรไฟล์, ถุงเงินรายได้รวม (`dashboardApi.finance().totalIncome`) ขวาบน, เมนู "คลัง & สูตร"→"การตั้งค่า" (NAV_GROUPS), route reminders title→"การแจ้งเตือนตามรอบ"
+- **ข้อ 4.1/4.2 การกินปู:** เอาปุ่ม "ให้อาหารแล้ววันนี้" ออก; chip = การกิน"วันนี้" (`f.todayFeeding` เริ่มว่างเสมอ ไม่ผูก feedingNote); FEEDING_TAGS ใหม่ = ไม่กินปลา/ไม่กินหอย/กินปลาปกติ/กินหอยปกติ/กินน้อย (เอา "กินปกติ" ออก); save: `todayFeeding` ทับ feedingNote ถ้าเลือก chip
+- **อื่นๆ:** 1.1 KPI การ์ด flex เต็มสูง; 3.1 หน้าร้านโชว์กรัม (`gramLabel`) + slider กรัม; 6.1-6.4 Reminders freeze+reorder(ชื่อ/จัดการ/เปิดใช้/รอบถัดไป/รอบ/ประเภท)+hint "แจ้งเตือนอีเมลทุก 12.30น"+pagination; 7.1 ใบเสร็จตัดคอลัมน์น้ำหนัก + 7.2 ลายน้ำชื่อฟาร์มเฉียง; 9.x Tasks (เอาลูกศร/แตะแถวขวาเปิด popup/ปุ่มไม่เบียด/scroll ไม่เด้ง/pagination/fix 400 ใช้ sentinel 'ALL'); 10 Ledger reorder+min-width; 11 Commerce reorder listing+contacts; 12 Substances ย้ายจัดการเป็นคอลัมน์ 2
+
+
 ### 🛍️ ยกเครื่องหน้าร้าน public (QR) — สวยขึ้น + กรองละเอียด + รูป/ขีด/วันเลี้ยง (2026-07-15) — BE+FE typecheck + FE build ผ่าน, ไม่ต้อง migrate
 - **BE `public.service.getPublicShop`:** เพิ่ม 2 ฟิลด์ต่อปูใน response — `imageUrl` (รูปล่าสุดจากรอบ MEASURE: `include history where zone=MEASURE orderBy recordedAt desc` แล้วหยิบ `snapshot.imageUrl` ตัวแรกที่ไม่ว่าง) + `daysRaised` (นับจาก `purchaseDate` ถึงวันนี้). **ไม่ต้อง migrate** (อ่านจากข้อมูลเดิม); type FE `PublicShopCrab` เพิ่ม `imageUrl`/`daysRaised`
 - **FE `PublicShopView.vue` รื้อใหม่หมด** (8 ข้อฟีดแบ็ค):
@@ -221,6 +232,7 @@
 - Startup file บน Plesk = `dist/server.js` (ต้อง `npm run build` ก่อน), `postinstall` รัน `prisma generate` ให้ตรง OS host
 
 ### ⚠️ ข้อควรระวัง DB (gotcha จริงในโปรเจกต์นี้)
+- **✅ ผู้ใช้อนุญาตให้ Claude รัน migration เองได้ (2026-07-17):** หลังแก้ `schema.prisma` ให้ **รัน `npx prisma migrate deploy` + `npx prisma generate` ให้เลยอัตโนมัติ** ไม่ต้องรอผู้ใช้ apply เอง (dev เครื่องนี้ต่อ DB remote จริงได้) — สร้างไฟล์ migration ด้วยชื่อ `<timestamp>_phaseNN_<slug>` ให้เรียบร้อยก่อน deploy
 - **รหัสผ่าน DB มี `@`** → ต้อง URL-encode เป็น `%40` ใน `DATABASE_URL` ไม่งั้น Prisma parse host ผิด (encode: `@`→`%40`, `#`→`%23`, `/`→`%2F`)
 - dev ต่อ MySQL **remote** (`14.207.141.5`) → ต้องเปิด Remote Access ใน Plesk + whitelist IP เครื่อง dev
 - `prisma migrate dev` ต้องมี **shadow DB** (มี `SHADOW_DATABASE_URL` ชี้ DB ว่างอีกตัว) เพราะ user สร้าง DB เองไม่ได้บน shared hosting; ตอน deploy ใช้ `prisma migrate deploy` (ไม่ต้อง shadow)

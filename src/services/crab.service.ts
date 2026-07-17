@@ -29,10 +29,25 @@ export async function listCrabs(user: AuthUser, filter: CrabFilter) {
       ...scope, // จำกัดเฉพาะปูในระบบของ user (ADMIN เห็นทั้งหมด)
       status: filter.status,
       type: filter.type,
+      deletedAt: null, // ข้อ 4.3: ซ่อนปูที่ถูกลบ (soft delete) ออกจากหน้าปกติ
     },
     orderBy: { id: 'asc' },
     include: {
       box: { select: { id: true, code: true } },
+    },
+  });
+}
+
+/** ข้อ 4.3: ประวัติปูทุกตัว (รวมที่ขายแล้ว/ตาย/ถูกลบ) — เคยอยู่กล่องไหน ขายไปเท่าไร ลบเมื่อไร + log แยกโซน */
+export async function listCrabLog(user: AuthUser, systemId?: number) {
+  const scope = await systemScopeWhere(user, systemId);
+  return prisma.crab.findMany({
+    where: { ...scope }, // ไม่กรอง deletedAt/status → เห็นทุกตัวในประวัติ
+    orderBy: [{ deletedAt: 'desc' }, { id: 'desc' }],
+    include: {
+      box: { select: { id: true, code: true, label: true } },
+      buyer: { select: { id: true, name: true } },
+      history: { orderBy: { recordedAt: 'desc' } },
     },
   });
 }
@@ -253,11 +268,14 @@ export function updateCrab(id: number, input: UpdateCrabInput) {
   });
 }
 
+/** ข้อ 4.3: soft delete — set deletedAt (ไม่ลบ record จริง) + คืนสถานะกล่องให้ว่าง
+ *  ยังดูประวัติย้อนหลังได้ผ่าน listCrabLog */
 export function deleteCrab(id: number) {
   return prisma.$transaction(async (tx) => {
     const crab = await tx.crab.findUnique({ where: { id } });
     if (!crab) throw notFound('ไม่พบปูตัวนี้');
-    await tx.crab.delete({ where: { id } });
+    if (crab.deletedAt) return; // ลบซ้ำ = no-op
+    await tx.crab.update({ where: { id }, data: { deletedAt: new Date() } });
     if (crab.boxId != null) await freeBoxIfEmpty(tx, crab.boxId);
   });
 }
@@ -382,7 +400,7 @@ export async function updateCrabHistory(
 /** คืนกล่องเป็น EMPTY ถ้าไม่มีปูที่ยังอยู่จริงในกล่องนั้นแล้ว */
 async function freeBoxIfEmpty(tx: Prisma.TransactionClient, boxId: number) {
   const living = await tx.crab.count({
-    where: { boxId, status: { in: ['FATTENING', 'READY'] } },
+    where: { boxId, status: { in: ['FATTENING', 'READY'] }, deletedAt: null },
   });
   if (living === 0) {
     await tx.crabBox.update({ where: { id: boxId }, data: { status: 'EMPTY' } });
@@ -429,7 +447,7 @@ function toMeasureRound(h: { recordedAt: Date; snapshot: Prisma.JsonValue }): Me
 export async function listCrabProgress(user: AuthUser, systemId?: number): Promise<CrabProgress[]> {
   const scope = await systemScopeWhere(user, systemId);
   const crabs = await prisma.crab.findMany({
-    where: { ...scope, status: { in: ['FATTENING', 'READY'] } },
+    where: { ...scope, status: { in: ['FATTENING', 'READY'] }, deletedAt: null },
     orderBy: [{ boxId: 'asc' }, { id: 'asc' }],
     include: {
       box: { select: { id: true, code: true, label: true } },
@@ -491,7 +509,7 @@ function ymd(d: Date | null): string {
 export async function exportCrabsCsv(user: AuthUser, systemId?: number): Promise<string> {
   const scope = await systemScopeWhere(user, systemId);
   const crabs = await prisma.crab.findMany({
-    where: scope,
+    where: { ...scope, deletedAt: null }, // ข้อ 4.3: ไม่รวมปูที่ถูกลบ
     orderBy: [{ systemId: 'asc' }, { id: 'asc' }],
     include: {
       box: { select: { code: true } },

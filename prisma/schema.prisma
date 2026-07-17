@@ -216,6 +216,7 @@ model Crab {
   status    CrabStatus @default(FATTENING)
   round     Int? // รอบการขุน
   note      String?    @db.Text
+  deletedAt DateTime? // ข้อ 4.3: soft delete — ซ่อนจากหน้าปกติ แต่ยังดูประวัติย้อนหลังได้
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
@@ -223,6 +224,8 @@ model Crab {
   firmnessLogs FirmnessRecord[]
   transactions Transaction[]
   history      CrabHistory[] // ประวัติการแก้ไขแยกโซน (ข้อ 8)
+
+  @@index([systemId, deletedAt])
 }
 
 /// ประวัติการบันทึกค่าปูแยก "โซน" — 1 การกดบันทึกอาจแก้หลายฟิลด์ แต่เก็บเฉพาะโซนที่เปลี่ยน (ข้อ 8)

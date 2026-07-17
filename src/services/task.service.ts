@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { notFound, badRequest } from '../lib/http';
 import type { AuthUser } from './auth.service';
 import { isAdmin, assertOwnership } from '../lib/scope';
+import { computeNextRunAt } from './reminder.service';
 
 // ── โมดูล D: Task = งานจริง 1 ชิ้น (instance ของ ReminderRule หรือ event chain) ──
 //
@@ -107,6 +108,22 @@ export async function createTask(input: CreateTaskInput) {
   });
 }
 
+/** สร้าง "งานเตือนครั้งเดียว" (ข้อ 5.4) — ผู้ใช้กรอกข้อความ + วันครบกำหนดเอง ไม่มีประเภท/กฎ
+ *  ปิด/ข้ามได้เหมือนงานทั่วไป แต่ไม่มีรอบถัดไป (fire once) */
+export function createManualTask(
+  user: AuthUser,
+  input: { title: string; dueAt: Date; systemId?: number | null; detail?: string | null },
+) {
+  return createTask({
+    type: 'CUSTOM',
+    title: input.title,
+    detail: input.detail ?? null,
+    dueAt: input.dueAt,
+    userId: user.id, // เตือนของผู้ใช้เองโดยตรง
+    systemId: input.systemId ?? null,
+  });
+}
+
 /** สร้าง Task จาก ReminderRule (ใช้ตอน scheduler tick / event) */
 export function createTaskFromRule(rule: ReminderRule, dueAt: Date, parentTaskId?: number) {
   return createTask({
@@ -159,8 +176,10 @@ export async function updateTaskStatus(id: number, user: AuthUser, status: TaskS
 // ไม่มี record มาปิด → ให้ผู้ใช้กดปุ่ม "ทำเสร็จแล้ว" เองได้
 const RECORD_CLOSED_TYPES: ReminderType[] = ['WATER_TEST', 'DOSING', 'RESTOCK'];
 
-/** ปิดงานตามรอบแบบ manual ("ทำเสร็จแล้ว") — เฉพาะงานเตือนเฉยๆ ที่ไม่มี record มาปิด */
-export async function completeTaskManually(id: number, user: AuthUser) {
+/** ปิดงานตามรอบแบบ manual ("ทำเสร็จแล้ว") — เฉพาะงานเตือนเฉยๆ ที่ไม่มี record มาปิด
+ *  ข้อ 6.5.1: ระบุวันที่ปิดงานได้ (doneAt) → ขึ้นในปฏิทินตามวันที่ปิดจริง (ไม่ใช่วันครบกำหนด)
+ *  ข้อ 6.5.2: ถ้างานมาจากกฎตามรอบ → รอบถัดไปนับต่อจาก "วันที่ปิดงาน" ไม่ใช่วันครบกำหนดเดิม */
+export async function completeTaskManually(id: number, user: AuthUser, doneAt?: Date) {
   const task = await prisma.task.findUnique({ where: { id } });
   if (!task) throw notFound('ไม่พบงานนี้');
   assertOwnership(user, task.userId);
@@ -174,8 +193,20 @@ export async function completeTaskManually(id: number, user: AuthUser) {
     );
   }
   if (task.status !== 'PENDING') return task;
-  return prisma.task.update({
+  const completedAt = doneAt ?? new Date();
+  const updated = await prisma.task.update({
     where: { id },
-    data: { status: 'DONE', completedAt: new Date() },
+    data: { status: 'DONE', completedAt },
   });
+  // ข้อ 6.5.2: เลื่อนรอบถัดไปของกฎให้นับต่อจากวันที่ปิดงานจริง
+  if (task.ruleId != null) {
+    const rule = await prisma.reminderRule.findUnique({ where: { id: task.ruleId } });
+    if (rule && rule.active && rule.scheduleKind !== 'EVENT') {
+      const next = computeNextRunAt(rule, completedAt);
+      if (next) {
+        await prisma.reminderRule.update({ where: { id: rule.id }, data: { nextRunAt: next } });
+      }
+    }
+  }
+  return updated;
 }

@@ -89,6 +89,16 @@ router.get(
   }),
 );
 
+// ข้อ 4.3: ประวัติปูทุกตัว (รวมขายแล้ว/ตาย/ถูกลบ) — ต้องมาก่อน '/:id'
+router.get(
+  '/log',
+  validate({ query: exportQuery }),
+  asyncHandler(async (req, res) => {
+    const { systemId } = req.query as z.infer<typeof exportQuery>;
+    res.json(serialize(await svc.listCrabLog(req.user!, systemId)));
+  }),
+);
+
 router.post(
   '/',
   validate({ body: crabBody }),
