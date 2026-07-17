@@ -4,6 +4,30 @@
 > อัปเดตทุกครั้งที่มี decision สำคัญ / สร้าง module ใหม่ / เปลี่ยน schema
 
 ## 👉 ทำต่อจากตรงนี้ (NEXT — session ใหม่อ่านตรงนี้ก่อน)
+### 🗓️ รอบฟีดแบ็ค: ปฏิทิน/งาน/สมุดบัญชี/แดชบอร์ด (2026-07-18) — BE typecheck + FE build ผ่าน, ไม่ต้อง migrate
+- **BE ใหม่ (endpoint เดียว):** `task.service.listTaskHistory(id,user)` + `GET /tasks/:id/history` (วางหลัง `/:id`) — คืนงานพี่น้อง `ruleId` เดียวกันที่ `status∈[DONE,SKIPPED]` (exclude ตัวเอง, orderBy completedAt desc, take 20, select id/status/completedAt/dueAt/title/type); งานครั้งเดียว (`ruleId=null`) คืน `[]`; FE type `TaskHistoryEntry` + `taskApi.history(id)`
+- **ข้อ 1 ปฏิทิน+กำหนดการ (CalendarView, FE):** popup **ปิด/ข้ามงานได้เลย** (`completeTask`/`skipTask` mirror TasksView + `canComplete`) — (1.2) เอาปุ่ม "ไปหน้างาน/ไปหน้าแจ้งเตือน" + `goManage` ออก; (1.3) ตัด text ไม่จำเป็น (เตือนแล้ว N ครั้ง / caption กฎ); (1.4) โชว์ "ปิดงานล่าสุด" (`lastCompletedFor` คำนวณจาก `tasks.value` ที่โหลดมา — ไม่ยิง API เพิ่ม); + โชว์ "เลยกำหนดมา N วัน"
+- **ข้อ 2 งานที่ต้องทำ (TasksView, FE):** (2.1) เรียงใหม่สุดก่อน (`sortedTasks` = dueAt desc, tie id desc); (2.2) **แก้มือถือเด้งบนสุดตอนปิดงาน** — action จาก dialog ทำ `window.scrollY=0` (scroll lock) → จับ `savedScrollY` **ก่อนเปิด dialog** ใน `openDetail` แล้ว `reloadPreservingScroll(y)` คืนค่านั้น (desktop ปุ่มในแถวใช้ scrollY ปัจจุบัน ผ่าน `scrollTarget()`); (2.3) ประวัติรอบที่ผ่านมา = toggle กดดูใน popup (โหลด `taskApi.history` เฉพาะงานมี `ruleId`); (2.4) โชว์ "เลยกำหนด N วัน" ใน popup + แถว
+- **ข้อ 3 สมุดบัญชี (LedgerView, FE):** (3.1) dropdown หมวดโชว์ไทย (`manualCategoryItems` = title ไทยจาก `categoryMeta`); (3.2) ย้ายคอลัมน์ "จัดการ" (แก้/ลบ) มาไว้**ถัดจากประเภท** (คอลัมน์ 2) เข้าถึงง่ายบนมือถือ (freeze-first ตรึงคอลัมน์แรก)
+- **ข้อ 4 แดชบอร์ด (DashboardView, FE):** ข้อความประกาศขาย (`buildPostText`) ตัดปูที่ถูกจองออก (`!reservedIds.value.has(c.id)`) — เดิมรวมปูจองด้วย
+- ⚠️ ยังไม่ทดสอบ browser จริง (typecheck+build ผ่าน) — รอผู้ใช้เทสปิดงานจากปฏิทิน + scroll มือถือ
+
+### 🐛 แก้ iOS Safari popup ปูค้าง/จุดสัมผัสเพี้ยน (2026-07-17) — FE-only (CrabsView), build ผ่าน, รอผู้ใช้เทสจริงบน Safari
+- **อาการ:** เปิด dialog ปูบน Safari iPhone บางครั้ง (~1/10) scroll ค้าง + แตะที่ว่างแต่ไปโดนปุ่ม (hit-test เพี้ยนแกน y) — Chrome iOS ปกติ; ชอบเกิดจังหวะสำคัญ (ถ่ายรูปไข่ปู)
+- **root cause (มั่นใจสูง):** Vuetify `v-dialog` default `scroll-strategy="block"` → set `html{position:fixed; top:-scrollY}` ตอนเปิด; บน iOS Safari ถ้าชนจังหวะ toolbar ยุบ/ขยาย (หรือกลับจากกล้อง) Safari วาดจอกับคำนวณ touch คนละตำแหน่ง → เพี้ยนเท่า scrollY + scroll ค้าง; ตัวเสริม = `dialog-bottom-transition` (transform) ค้างกลางอนิเมชันได้
+- **fix (CrabsView 2 dialog: ปูหลัก + รับล็อต):** `:scroll-strategy="mobile ? 'none' : 'block'"` (fullscreen อยู่แล้ว ไม่ต้องล็อก body) + `:transition="mobile ? false : ..."` (เปิดทันที ไม่มี transform) + CSS `.crab-dialog-body{overscroll-behavior:contain}` กัน scroll ทะลุ + `.crab-dialog-card{touch-action:manipulation}` ตัด delay double-tap
+- ⏭️ **ถ้าผู้ใช้เทสแล้วหาย → roll out ชุดเดียวกันให้ dialog fullscreen หน้าอื่น** (Commerce sell/contact, Water, Dosing, Inventory, Ledger, Reminders, Substances, CrabLog, Dashboard) — ตอนนี้แก้เฉพาะจุดที่เจ็บก่อนเพื่อพิสูจน์สาเหตุ
+
+### 🎨 รอบปรับ UI: dashboard sections + ตาราง listing มีสีสัน + navbar (2026-07-17) — FE-only, build ผ่าน, ไม่ต้อง migrate
+- **ข้อ 1 (DashboardView รื้อ layout):** แบ่งเป็น **4 section ใหญ่** (`<section class="dash-section">` + หัวข้อไอคอน+เส้นใต้สีธีม `.dash-section__head`): ① ภาพรวม (KPI+อากาศ) ② การเงิน (area+donut+ตารางแยกหมวด) ③ สต็อกปู (สต็อก+bar+ข้อความโพสต์) ④ สรุปการขุน (การ์ดสถิติ 4 ใบ + ตารางกำไร/วัน)
+  - **KPI แก้ "การ์ดยักษ์ตลกๆ" (ข้อ 1.3):** เลิก `.kpi-card` ที่ยืดเต็มความสูง → `.kpi-tile` สูงคงที่ (min-height 82px) + แถบสีซ้าย `--kpi`, จัด 2x2 (`cols=6`) + `align-content:space-between` ให้กระจายเต็มความสูงเท่าการ์ดอากาศโดยการ์ดไม่บวม; เลิก `lg=3` ที่ทำเลขยาว (฿770.89) ถูกตัด
+  - คู่การ์ดในแถวใช้ `d-flex`+`flex-grow-1` สูงเท่ากัน (แก้ desktop ไม่สมดุล ข้อ 1.2)
+  - **ตารางกำไร/วัน (ข้อ 1.3):** เพิ่ม pagination client-side (`profitPage`/`profitPageSize` 5/10/20/50 + `v-pagination`) + ป้ายชนิด chip สี/ไอคอน (`typeChip`) + กำไรสี เขียว/แดง
+- **ข้อ 2 (navbar):** ซ่อน brand "🦀 ฟาร์มปูคอนโด" บนมือถือ (`d-none d-sm-block`)
+- **ข้อ 3:** ไอคอนถุงเงิน `mdi-sack` เปลี่ยนเป็นสีทอง `#ffc107`
+- **ข้อ 4 (ตาราง listing ทุกหน้า — global.css `.freeze-first`):** หัวตารางไล่สีจากธีม (`color-mix` primary) + ตัวอักษรสีธีม, สลับสีแถวคู่ (zebra), hover ไฮไลต์, **เซลล์ `white-space:nowrap` → มือถือไม่บีบคอลัมน์ เลื่อนแนวนอนแทน (ข้อ 4.2)**, มุมโค้ง; sticky คอลัมน์แรกพื้นทึบตามสีแถว (odd/even/hover). ครอบทุกหน้าที่ใช้ `freeze-first` (Commerce/Ledger/Inventory/Substances/Dosing/Water/Reminders/CrabLog/Dashboard). LedgerView หมวดเปลี่ยนจาก enum ดิบ → ชื่อไทย+ไอคอน (`categoryMeta`)
+- ⚠️ ใช้ CSS `color-mix()` (เบราว์เซอร์ใหม่รองรับ); ยังไม่ทดสอบ browser จริง (build+typecheck ผ่าน)
+
 ### 🧹 รอบปรับ UI 12 หมวด + soft delete ปู + ปิดงานย้อนหลัง (2026-07-17) — BE+FE typecheck + FE build ผ่าน, ✅ migration apply แล้ว
 - ✅ **migration `phase18_crab_soft_delete` apply ลง DB จริงแล้ว** (2026-07-17): `ALTER TABLE Crab ADD deletedAt DATETIME(3) NULL` + index `(systemId, deletedAt)`; client regenerate แล้ว
 - **ข้อ 4.3 soft delete ปู:** `Crab.deletedAt`; `deleteCrab` เปลี่ยนเป็น set `deletedAt=now` (ไม่ลบจริง) + `freeBoxIfEmpty`; ทุก query ปูปกติกรอง `deletedAt: null` (`listCrabs`/`listCrabProgress`/`exportCrabsCsv`/`public.getPublicShop`/`dashboard` crab groupBy+sold); **ใหม่ `listCrabLog` + `GET /crabs/log`** (คืนปูทุกตัวรวมขาย/ลบ + box/buyer/history); **FE หน้าใหม่ `CrabLogView.vue` route `/crab-log` group care "ประวัติปูทั้งหมด"** (ตาราง + dialog log แยกโซน + toggle แสดงปูที่ถูกลบ)

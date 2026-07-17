@@ -44,6 +44,25 @@ export async function getTask(id: number, user?: AuthUser) {
   return task;
 }
 
+/** ประวัติรอบที่ผ่านมาของงานตามรอบ (ข้อ 1.4 / 2.3) — งานพี่น้อง (ruleId เดียวกัน) ที่ปิด/ข้ามแล้ว
+ *  งานครั้งเดียว (ruleId == null) ไม่มีประวัติรอบ → คืน [] */
+export async function listTaskHistory(id: number, user: AuthUser) {
+  const task = await prisma.task.findUnique({ where: { id } });
+  if (!task) throw notFound('ไม่พบงานนี้');
+  assertOwnership(user, task.userId);
+  if (task.ruleId == null) return [];
+  return prisma.task.findMany({
+    where: {
+      ruleId: task.ruleId,
+      id: { not: id },
+      status: { in: ['DONE', 'SKIPPED'] },
+    },
+    orderBy: [{ completedAt: 'desc' }],
+    take: 20,
+    select: { id: true, status: true, completedAt: true, dueAt: true, title: true, type: true },
+  });
+}
+
 /** มี Task ที่ยังค้าง (PENDING) ของกฎนี้อยู่ไหม — กันสร้างซ้ำซ้อนตอน tick */
 export function hasOpenTaskForRule(ruleId: number) {
   return prisma.task

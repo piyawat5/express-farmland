@@ -171,6 +171,15 @@ taskRouter.get(
   }),
 );
 
+// ประวัติรอบที่ผ่านมาของงานตามรอบ (ข้อ 1.4 / 2.3) — คืนงานพี่น้องที่ปิด/ข้ามแล้ว
+taskRouter.get(
+  '/:id/history',
+  validate({ params: idParam }),
+  asyncHandler(async (req, res) => {
+    res.json(serialize(await tasks.listTaskHistory(Number(req.params.id), req.user!)));
+  }),
+);
+
 // เปลี่ยนสถานะ manual — ข้าม/ยกเลิก (DONE ต้องมาจาก record จริงเท่านั้น)
 taskRouter.patch(
   '/:id',
