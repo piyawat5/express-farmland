@@ -4,6 +4,14 @@
 > อัปเดตทุกครั้งที่มี decision สำคัญ / สร้าง module ใหม่ / เปลี่ยน schema
 
 ## 👉 ทำต่อจากตรงนี้ (NEXT — session ใหม่อ่านตรงนี้ก่อน)
+### 🗓️ ปฏิทินกรองสถานะ + แก้บั๊กกล่องหลังปูตัวสุดท้ายตาย (2026-07-20) — BE typecheck + FE build ผ่าน, ไม่ต้อง migrate
+- **ข้อ 1 ปฏิทิน+กำหนดการ (CalendarView, FE):** เพิ่ม chip กรองสถานะ 4 หมวด `ยังไม่ทำ/เสร็จแล้ว/ข้าม/อื่นๆ` (`filterDefs`+`activeFilters` Set, toggle เปิด/ปิด, โชว์จำนวนต่อหมวด `filterCounts`) — กรองที่ `events` computed จึงมีผล**ทั้ง dayGridMonth และ listMonth (กำหนดการ)**; หมวด "อื่นๆ" = งาน CANCELLED + กำหนดเตือนถัดไปของ rule (`taskFilterKey`)
+- **ข้อ 2 บั๊กปูตัวสุดท้ายตาย:**
+  - (2.1 สีกล่องไม่กลับเป็นว่าง) FE `CrabsView.boxStyle` — ทาสี `box.color` เฉพาะเมื่อ `crabsInBox(box.id).length > 0`; กล่องไม่มีปูมีชีวิต → คืน undefined → ตกไป `.box-empty` (เทา) แทนสีเดิม
+  - (2.2 popup ยังขึ้น "กำลังขุน") FE ซ่อน v-select สถานะเมื่อ `f.id == null` (ปูใหม่เริ่ม FATTENING เสมอ) → กล่องว่าง เปิดมา = ฟอร์มเปล่าไม่มีสถานะหลอก
+  - (BE เสริมความถูกต้อง) `crab.service.updateCrab` sync สถานะกล่อง: ปูตาย/ขายในกล่องเดิม → ใช้ `freeBoxIfEmpty` (ว่างเฉพาะเมื่อไม่มีปูตัวอื่นเหลือ) แทนการ set `EMPTY` ตรงๆ — กันบั๊ก set EMPTY ทั้งที่ยังมีปูตัวอื่น (1 กล่องหลายตัว)
+- ⚠️ ยังไม่ทดสอบ browser จริง (typecheck+build ผ่าน) — รอผู้ใช้เทสกรองปฏิทิน + ให้ปูตัวสุดท้ายตายแล้วเช็คสีกล่อง/popup
+
 ### 🗓️ รอบฟีดแบ็ค: ปฏิทิน/งาน/สมุดบัญชี/แดชบอร์ด (2026-07-18) — BE typecheck + FE build ผ่าน, ไม่ต้อง migrate
 - **BE ใหม่ (endpoint เดียว):** `task.service.listTaskHistory(id,user)` + `GET /tasks/:id/history` (วางหลัง `/:id`) — คืนงานพี่น้อง `ruleId` เดียวกันที่ `status∈[DONE,SKIPPED]` (exclude ตัวเอง, orderBy completedAt desc, take 20, select id/status/completedAt/dueAt/title/type); งานครั้งเดียว (`ruleId=null`) คืน `[]`; FE type `TaskHistoryEntry` + `taskApi.history(id)`
 - **ข้อ 1 ปฏิทิน+กำหนดการ (CalendarView, FE):** popup **ปิด/ข้ามงานได้เลย** (`completeTask`/`skipTask` mirror TasksView + `canComplete`) — (1.2) เอาปุ่ม "ไปหน้างาน/ไปหน้าแจ้งเตือน" + `goManage` ออก; (1.3) ตัด text ไม่จำเป็น (เตือนแล้ว N ครั้ง / caption กฎ); (1.4) โชว์ "ปิดงานล่าสุด" (`lastCompletedFor` คำนวณจาก `tasks.value` ที่โหลดมา — ไม่ยิง API เพิ่ม); + โชว์ "เลยกำหนดมา N วัน"

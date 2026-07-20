@@ -256,13 +256,16 @@ export function updateCrab(id: number, input: UpdateCrabInput) {
 
     // sync สถานะกล่อง
     if (current.boxId != null && current.boxId !== nextBoxId) {
-      await freeBoxIfEmpty(tx, current.boxId);
+      await freeBoxIfEmpty(tx, current.boxId); // ออกจากกล่องเดิม → ว่างถ้าไม่มีปูเหลือ
     }
     if (nextBoxId != null) {
-      await tx.crabBox.update({
-        where: { id: nextBoxId },
-        data: { status: stillLiving ? 'OCCUPIED' : 'EMPTY' },
-      });
+      if (stillLiving) {
+        await tx.crabBox.update({ where: { id: nextBoxId }, data: { status: 'OCCUPIED' } });
+      } else {
+        // ปูตาย/ขาย (อยู่กล่องเดิม) → ว่างเฉพาะเมื่อไม่มีปูตัวอื่นเหลือในกล่อง
+        // (1 กล่องมีได้หลายตัว — กันเผลอ set EMPTY ทั้งที่ยังมีปูตัวอื่น; ตัวสุดท้ายตาย → กล่องว่างจริง)
+        await freeBoxIfEmpty(tx, nextBoxId);
+      }
     }
     return crab;
   });
