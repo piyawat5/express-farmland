@@ -3,7 +3,6 @@ import { notifyPendingDigest } from '../lib/notify';
 import { createTaskFromRule, hasOpenTaskForRule } from './task.service';
 import { computeNextRunAt } from './reminder.service';
 import { generateRestockTasks } from './inventory.service';
-import { generateCrabCheckTasks } from './crabCheck.service';
 
 // ── โมดูล D: Scheduler — เรียกจาก Plesk Scheduled Task (cron) ทุกรอบ ──
 //
@@ -18,7 +17,6 @@ export type TickResult = {
   now: string;
   generated: number; // จำนวน Task ที่สร้างใหม่จากกฎ
   restock: number; // จำนวน Task RESTOCK ที่สร้างใหม่จากของใกล้หมด
-  crabCheck: number; // จำนวน Task CRAB_CHECK ที่สร้างใหม่ (ปูถึงกำหนดเช็ค, ข้อ 3)
   pending: number; // จำนวนงานค้างทั้งหมดที่ถึงกำหนด
   emailsSent: number; // จำนวนเมลสรุปที่ส่ง (0 = ไม่มีงานค้าง/ส่งไม่สำเร็จ)
 };
@@ -49,14 +47,23 @@ async function generateDueTasks(now: Date): Promise<number> {
 export async function tick(now = new Date()): Promise<TickResult> {
   const generated = await generateDueTasks(now);
   const restock = await generateRestockTasks(now); // ของใกล้หมด → Task RESTOCK
-  const crabCheck = await generateCrabCheckTasks(now); // ปูถึงกำหนดเช็ค → Task CRAB_CHECK (ข้อ 3)
+  // ยกเลิกงานเช็คไข่/เนื้อ (CRAB_CHECK) ที่ค้างอยู่ — เอาฟีเจอร์นี้ออกแล้ว (ผู้ใช้ไม่ต้องการ)
+  await cancelCrabCheckTasks();
   const digest = await notifyPendingDigest(now);
   return {
     now: now.toISOString(),
     generated,
     restock,
-    crabCheck,
     pending: digest.pending,
     emailsSent: digest.recipients,
   };
+}
+
+/** ปิดกวาดงาน CRAB_CHECK ที่ยังค้าง — ฟีเจอร์เตือนเช็คไข่/เนื้อถูกถอดออกแล้ว
+ *  (idempotent: หลังรอบแรกจะไม่เหลืองานให้ยกเลิกอีก) */
+async function cancelCrabCheckTasks(): Promise<void> {
+  await prisma.task.updateMany({
+    where: { type: 'CRAB_CHECK', status: 'PENDING' },
+    data: { status: 'CANCELLED' },
+  });
 }

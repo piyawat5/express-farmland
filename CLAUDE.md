@@ -4,6 +4,16 @@
 > อัปเดตทุกครั้งที่มี decision สำคัญ / สร้าง module ใหม่ / เปลี่ยน schema
 
 ## 👉 ทำต่อจากตรงนี้ (NEXT — session ใหม่อ่านตรงนี้ก่อน)
+### 🔧 รอบฟีดแบ็ค 9 ข้อ: บั๊กรอบถัดไป + รื้อรับปูเข้าล็อต + icon ทุก input (2026-07-27) — BE typecheck + FE build ผ่าน, ไม่ต้อง migrate
+- **ข้อ 1 (บั๊กรอบถัดไปไม่นับจากวันปิดงาน):** `reminder.computeNextRunAt(rule, after, {minAdvance})` เพิ่ม opt `minAdvance` — บังคับ +1 รอบเต็มเสมอ; `task.completeTaskManually` เรียกด้วย `{minAdvance:true}` → ปิดงานทุก 12 วันวันที่ 22 → รอบถัดไป = 3 ส.ค. (เดิม: ปิดช่วงก่อนเวลา timeOfDay 08:00 → `while` คืน "วันเดิม 08:00" (บวก 0 รอบ) → tick เด้งงานใหม่วันรุ่งขึ้น). createRule/generateDueTasks **ไม่ใช้** minAdvance (คงเดิม)
+- **ข้อ 6 (เอาเตือนเช็คไข่ CRAB_CHECK ออก):** BE `scheduler.tick` เลิกเรียก generateCrabCheckTasks + **ลบไฟล์ `crabCheck.service.ts`** + เพิ่ม `cancelCrabCheckTasks()` (updateMany PENDING CRAB_CHECK→CANCELLED ทุก tick, idempotent กวาดของเก่า); FE ลบ settings `eggCheckDays/meatCheckDays` (settingsForm) + ป้ายบนกล่อง (`checkDue`/`boxHasDue`/`.crab-due`/`.box-due`) — enum `CRAB_CHECK` ยังอยู่ใน schema/routes (ไม่ migrate)
+- **ข้อ 9 (รื้อ "รับปูเข้าล็อต" เป็นทีละตัว + คิดต้นทุนทีหลัง):** เดิมต้องกรอกน้ำหนักครบทุกตัวก่อนบันทึก = ผิดขั้นตอนจริง (หยิบทีละตัว→ส่องไข่/แนบรูป/ชั่ง→บันทึก→ตัวถัดไป). ใหม่ = **wizard ทีละตัว** (`intakeDialog`): เลือกกล่อง(paint)→`openIntake` → กรอกปูตัวเดียว (กล่อง dropdown/น้ำหนัก/ไข่%/สีเคเบิ้ลไทล์/รูป) → `saveIntakeCrab` **สร้างปูทันที** (status FATTENING, purchasePrice null) → เคลียร์ฟอร์มไปกล่องถัดไป (`intakeQueue`); จบล็อต `finishIntake` = ใส่ราคารวม → แบ่งตามน้ำหนัก PATCH purchasePrice ทุกตัว + ลง BUY (คิดต้นทุนทีหลัง); ลบของเดิม (`batchForm/allocations/setCount/saveBatch`)
+- **ข้อ 2/5/7 (CalendarView):** (2) default chip เหลือ `pending` อย่างเดียว; (5) popup โชว์ "ประวัติรอบที่ผ่านมา" (`historyFor`/`detailHistory` คำนวณจาก tasks ที่โหลดมา — ไม่ยิง API); (7) เลยกำหนด>5วัน = `v-alert` แดง `isVeryLate`
+- **ข้อ 7/8 (TasksView):** (8) จัดกลุ่มตามประเภทงาน (`groupedTasks` + `TYPE_ORDER`/`typeIcon` subheader); (7) แถวเลยกำหนด>5วัน = `.task-very-late` (ขอบ+พื้นแดง) + chip แดง "เลย N วัน"; popup = alert แดง
+- **ข้อ 3 (App.vue navbar):** ถุงเงินขวาบนเปลี่ยน `finance().totalIncome` → `.net` (กำไรสุทธิ, แดงถ้าติดลบ)
+- **ข้อ 4 (icon ทุก input):** ใส่ `prepend-inner-icon` ให้ text-field/select/textarea ทุกฟอร์ม (Water/Dosing/Reminders/Ledger/Inventory/Substances/Commerce/Dashboard/PublicShop/Crabs/Tasks/Calendar) — v-switch/v-file-input คงเดิม (มีไอคอนอยู่แล้ว)
+- ⚠️ ยังไม่ทดสอบ browser จริง (BE `tsc` + FE `vue-tsc`+`vite build` ผ่าน) — งาน CRAB_CHECK ค้างเก่าจะถูกยกเลิกอัตโนมัติเมื่อ scheduler tick รอบถัดไปยิง
+
 ### 🗓️ ปฏิทินกรองสถานะ + แก้บั๊กกล่องหลังปูตัวสุดท้ายตาย (2026-07-20) — BE typecheck + FE build ผ่าน, ไม่ต้อง migrate
 - **ข้อ 1 ปฏิทิน+กำหนดการ (CalendarView, FE):** เพิ่ม chip กรองสถานะ 4 หมวด `ยังไม่ทำ/เสร็จแล้ว/ข้าม/อื่นๆ` (`filterDefs`+`activeFilters` Set, toggle เปิด/ปิด, โชว์จำนวนต่อหมวด `filterCounts`) — กรองที่ `events` computed จึงมีผล**ทั้ง dayGridMonth และ listMonth (กำหนดการ)**; หมวด "อื่นๆ" = งาน CANCELLED + กำหนดเตือนถัดไปของ rule (`taskFilterKey`)
 - **ข้อ 2 บั๊กปูตัวสุดท้ายตาย:**

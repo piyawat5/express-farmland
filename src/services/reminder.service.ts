@@ -43,8 +43,17 @@ type ScheduleFields = Pick<
  * - INTERVAL_DAYS/MONTHS: ยึด timeOfDay ถ้ามี ไม่งั้น +interval จาก after ตรงๆ
  * - CRON: หานาทีถัดไปที่ตรง expression
  * - EVENT: null (ถูกสร้างจาก event ไม่ใช่ตามเวลา)
+ *
+ * opts.minAdvance = true → บังคับเลื่อนไปข้างหน้าอย่างน้อย 1 รอบเต็มเสมอ
+ *   ใช้ตอน "ปิดงานตามรอบ" (รอบถัดไปต้องนับจากวันที่ปิดจริง +interval เต็ม)
+ *   กันบั๊ก: ถ้าปิดงานช่วงเช้ามืด (ก่อนเวลา timeOfDay เช่น 08:00) เดิม while จะคืน
+ *   "วันเดียวกัน 08:00" (บวก 0 รอบ) → tick ถัดไปยิงงานซ้ำวันรุ่งขึ้นทันที
  */
-export function computeNextRunAt(rule: ScheduleFields, after: Date): Date | null {
+export function computeNextRunAt(
+  rule: ScheduleFields,
+  after: Date,
+  opts: { minAdvance?: boolean } = {},
+): Date | null {
   const interval = rule.intervalValue ?? 1;
   // ถ้าไม่ระบุเวลา → ใช้ 08:00 (ผู้ใช้เลือกเวลาเองได้ผ่าน timeOfDay)
   const timeOfDay = rule.timeOfDay || DEFAULT_TIME_OF_DAY;
@@ -55,12 +64,14 @@ export function computeNextRunAt(rule: ScheduleFields, after: Date): Date | null
 
     case 'INTERVAL_DAYS': {
       let c = applyTimeOfDay(after, timeOfDay);
+      if (opts.minAdvance) c = addDays(c, interval); // อย่างน้อย +1 รอบเต็ม
       while (c <= after) c = addDays(c, interval);
       return c;
     }
 
     case 'INTERVAL_MONTHS': {
       let c = applyTimeOfDay(after, timeOfDay);
+      if (opts.minAdvance) c = addMonths(c, interval);
       while (c <= after) c = addMonths(c, interval);
       return c;
     }

@@ -218,10 +218,12 @@ export async function completeTaskManually(id: number, user: AuthUser, doneAt?: 
     data: { status: 'DONE', completedAt },
   });
   // ข้อ 6.5.2: เลื่อนรอบถัดไปของกฎให้นับต่อจากวันที่ปิดงานจริง
+  // minAdvance: บังคับ +1 รอบเต็มจากวันที่ปิด (เช่น ปิดวันที่ 22 ทุก 12 วัน → รอบถัดไป = 3 ส.ค.)
+  // ไม่ให้เด้งเป็นวันเดียวกัน/วันรุ่งขึ้นตอนปิดงานช่วงก่อนเวลา timeOfDay
   if (task.ruleId != null) {
     const rule = await prisma.reminderRule.findUnique({ where: { id: task.ruleId } });
     if (rule && rule.active && rule.scheduleKind !== 'EVENT') {
-      const next = computeNextRunAt(rule, completedAt);
+      const next = computeNextRunAt(rule, completedAt, { minAdvance: true });
       if (next) {
         await prisma.reminderRule.update({ where: { id: rule.id }, data: { nextRunAt: next } });
       }
