@@ -108,6 +108,8 @@ model CrabSystem {
   sizeBuckets  Json?
   // ตั้งค่าใบเสร็จ/ใบเสนอราคาต่อระบบ — { shopName, logoUrl, color, footerNote, blockOrder, priceEgg, priceMeat }
   receiptSettings Json?
+  // ตั้งค่ารายงาน/คำนวณราคาปูต่อระบบ — { fixedCosts:[{label,monthly}], daysPerMonth, boxCount, sizeTiers:[{label,minG,maxG,pricePerKilo,divisorG}] }
+  reportSettings Json?
   // พิกัดสำหรับการ์ดสภาพอากาศบนแดชบอร์ด (Open-Meteo) — ข้อ 2.2
   weatherLat   Float?
   weatherLng   Float?
@@ -310,6 +312,7 @@ model WaterTest {
   alkalinity Decimal?   @db.Decimal(6, 2)
   magnesium  Decimal?   @db.Decimal(6, 2)
   calcium    Decimal?   @db.Decimal(6, 2)
+  potassium  Decimal?   @db.Decimal(6, 2) // โพแทสเซียม (K) ppm
   salinity   Decimal?   @db.Decimal(5, 2)
   ammonia    Decimal?   @db.Decimal(6, 3)
   nitrite    Decimal?   @db.Decimal(6, 3)
@@ -339,6 +342,7 @@ enum WaterParam {
   ALKALINITY
   MAGNESIUM
   CALCIUM
+  POTASSIUM // โพแทสเซียม (K)
   SALINITY
   AMMONIA
   NITRITE

@@ -17,6 +17,7 @@ export const PARAM_FIELD = {
   ALKALINITY: 'alkalinity',
   MAGNESIUM: 'magnesium',
   CALCIUM: 'calcium',
+  POTASSIUM: 'potassium',
   SALINITY: 'salinity',
   AMMONIA: 'ammonia',
   NITRITE: 'nitrite',

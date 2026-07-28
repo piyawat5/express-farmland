@@ -83,6 +83,11 @@ const financeQuery = z.object({
   systemId: z.coerce.number().int().positive().optional(),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
+  // แยกบัญชีต่อระบบ (ดีฟอลต์): true = รวมรายการส่วนกลาง (systemId=null) เข้าระบบที่เลือกด้วย
+  includeUnassigned: z
+    .enum(['true', 'false'])
+    .transform((v) => v === 'true')
+    .optional(),
 });
 
 const systemQuery = z.object({
@@ -102,8 +107,10 @@ dashboardRouter.get(
   '/finance',
   validate({ query: financeQuery }),
   asyncHandler(async (req, res) => {
-    const { systemId, from, to } = req.query as z.infer<typeof financeQuery>;
-    res.json(serialize(await dashboardSvc.financeSummary(req.user!, { systemId, from, to })));
+    const { systemId, from, to, includeUnassigned } = req.query as z.infer<typeof financeQuery>;
+    res.json(
+      serialize(await dashboardSvc.financeSummary(req.user!, { systemId, from, to, includeUnassigned })),
+    );
   }),
 );
 

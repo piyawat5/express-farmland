@@ -45,6 +45,30 @@ const systemBody = z.object({
     })
     .nullable()
     .optional(),
+  // ตั้งค่ารายงาน/คำนวณราคาปูต่อระบบ (ต้นทุนคงที่รายเดือน + เรทไซส์/ราคา) — ข้อรายงาน
+  reportSettings: z
+    .object({
+      fixedCosts: z
+        .array(z.object({ label: z.string().max(60), monthly: z.number().nonnegative() }))
+        .nullable()
+        .optional(), // ต้นทุนคงที่รายเดือน (ค่าไฟ/ค่าแรง/อาหาร/แร่ธาตุ ...)
+      daysPerMonth: z.number().positive().max(366).nullable().optional(), // ตัวหารต่อวัน (ดีฟอลต์ 30)
+      boxCount: z.number().positive().max(100000).nullable().optional(), // ตัวหารต่อกล่อง (ดีฟอลต์ = จำนวนกล่อง)
+      sizeTiers: z
+        .array(
+          z.object({
+            label: z.string().max(40), // ชื่อเรท เช่น L / 3-4 ตัวโล
+            minG: z.number().nonnegative(), // น้ำหนักต่ำสุดของเรท (กรัม)
+            maxG: z.number().nonnegative(), // น้ำหนักสูงสุดของเรท (กรัม)
+            pricePerKilo: z.number().nonnegative(), // ราคา/กก. ของเรท
+            divisorG: z.number().positive(), // ตัวหารสูตรราคาตลาด (max กรัมของเรท เช่น 333)
+          }),
+        )
+        .nullable()
+        .optional(),
+    })
+    .nullable()
+    .optional(),
   // พิกัดการ์ดสภาพอากาศ (ข้อ 2.2)
   weatherLat: z.number().min(-90).max(90).nullable().optional(),
   weatherLng: z.number().min(-180).max(180).nullable().optional(),

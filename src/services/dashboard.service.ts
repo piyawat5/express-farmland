@@ -19,18 +19,21 @@ function dateRange(from?: Date, to?: Date): Prisma.DateTimeFilter | undefined {
 }
 
 // ── สรุปการเงิน (จาก LedgerEntry) ──────────────────────────────────────
-export type FinanceQuery = { systemId?: number; from?: Date; to?: Date };
+// includeUnassigned: รวมรายการที่ไม่ผูกระบบ (systemId=null) เข้ากับระบบที่เลือกด้วยหรือไม่
+// ดีฟอลต์ = false → แยกบัญชีเด็ดขาดต่อระบบปู (ผู้ใช้ต้องการให้แต่ละระบบไม่ปนกัน)
+export type FinanceQuery = { systemId?: number; from?: Date; to?: Date; includeUnassigned?: boolean };
 
-export async function financeSummary(user: AuthUser, { systemId, from, to }: FinanceQuery) {
-  // เมื่อกรองตามระบบ ต้องรวมรายการที่ "ไม่ผูกระบบ" (systemId=null เช่น ค่าอาหาร/สาร
-  // ที่ลงผ่านสมุดบัญชี) ด้วย — ไม่งั้นรายจ่ายรวมบนแดชบอร์ดจะเป็น 0 เสมอ
-  // (เลียนแบบ pattern OR ของ pendingTasks ใน overview)
+export async function financeSummary(
+  user: AuthUser,
+  { systemId, from, to, includeUnassigned = false }: FinanceQuery,
+) {
   const where: Prisma.LedgerEntryWhereInput = {
     ...ownerWhere(user),
     occurredAt: dateRange(from, to),
   };
   if (systemId != null) {
-    where.OR = [{ systemId }, { systemId: null }];
+    // แยกเด็ดขาด: กรองเฉพาะระบบนี้; ถ้า includeUnassigned จึงจะรวมรายการส่วนกลาง (systemId=null)
+    where.OR = includeUnassigned ? [{ systemId }, { systemId: null }] : [{ systemId }];
   }
   const entries = await prisma.ledgerEntry.findMany({
     where,

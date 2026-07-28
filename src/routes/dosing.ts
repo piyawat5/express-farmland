@@ -21,6 +21,7 @@ const waterParam = z.enum([
   'ALKALINITY',
   'MAGNESIUM',
   'CALCIUM',
+  'POTASSIUM',
   'SALINITY',
   'AMMONIA',
   'NITRITE',

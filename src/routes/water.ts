@@ -16,17 +16,19 @@ const waterParam = z.enum([
   'ALKALINITY',
   'MAGNESIUM',
   'CALCIUM',
+  'POTASSIUM',
   'SALINITY',
   'AMMONIA',
   'NITRITE',
 ]);
 
-/** ค่าน้ำ 7 พารามิเตอร์ (กรอกเฉพาะตัวที่วัด) */
+/** ค่าน้ำ 8 พารามิเตอร์ (กรอกเฉพาะตัวที่วัด) */
 const waterValues = z.object({
   ph: z.number().nullable().optional(),
   alkalinity: z.number().nullable().optional(),
   magnesium: z.number().nullable().optional(),
   calcium: z.number().nullable().optional(),
+  potassium: z.number().nullable().optional(),
   salinity: z.number().nullable().optional(),
   ammonia: z.number().nullable().optional(),
   nitrite: z.number().nullable().optional(),

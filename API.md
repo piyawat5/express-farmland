@@ -67,6 +67,8 @@
 - `ownerId` ถ้าไม่ส่ง → ตั้งเป็น **ผู้สร้าง** (req.user) อัตโนมัติ; `notifyEmail` = อีเมลแจ้งเตือนเฉพาะระบบ (ข้อ 4)
 - `eggCheckDays`/`meatCheckDays` (Int, nullable) = เกณฑ์ "เลี้ยงครบกี่วันควรเช็คไข่/เนื้อ" → scheduler สร้าง Task `CRAB_CHECK` (ข้อ 3)
 - `sizeBuckets` (Json, nullable) = ช่วงไซส์ตัวโลสำหรับข้อความโพสต์ `[{minPerKilo, maxPerKilo}]` (ข้อ 5) — set null ใช้ `Prisma.DbNull` ที่ service
+- `receiptSettings` (Json, nullable) = ตั้งค่าใบเสร็จ/หน้าร้าน `{ shopName, logoUrl, color, footerNote, blockOrder, priceEgg, priceMeat }`
+- `reportSettings` (Json, nullable) = ตั้งค่ารายงาน/คำนวณราคาปู `{ fixedCosts:[{label,monthly}], daysPerMonth, boxCount, sizeTiers:[{label,minG,maxG,pricePerKilo,divisorG}] }` — set null ใช้ `Prisma.DbNull` ที่ service
 - response มี field `ownerId` + `notifyEmail` — frontend ใช้ `ownerId` เทียบกับ user ปัจจุบันเพื่อรู้ว่าแก้ได้ไหม
 
 ### CrabBox (nested + รายตัว)
@@ -137,7 +139,7 @@
 | PATCH | `/api/water-tests/:id` | แก้ |
 | DELETE | `/api/water-tests/:id` | ลบ |
 
-- **Body:** `{ testedAt?(default now), note?, ph?, alkalinity?, magnesium?, calcium?, salinity?, ammonia?, nitrite? }` (กรอกเฉพาะตัวที่วัด)
+- **Body:** `{ testedAt?(default now), note?, ph?, alkalinity?, magnesium?, calcium?, potassium?, salinity?, ammonia?, nitrite? }` (กรอกเฉพาะตัวที่วัด)
 - **event chain:** POST จะปิด Task วัดน้ำที่ค้าง + ถ้าค่าหลุดเป้าจะสร้าง Task ปรุงน้ำต่อให้ (`dosingTaskId`)
 
 ### WaterTarget (ช่วงเป้าหมาย min/max ต่อพารามิเตอร์)
@@ -146,7 +148,7 @@
 | GET | `/api/systems/:id/water-targets` | 7 พารามิเตอร์ |
 | PUT | `/api/systems/:id/water-targets` | upsert ทีละตัว — `{ parameter*, minTarget?, maxTarget?, unit? }` |
 
-- `parameter`: `PH` · `ALKALINITY` · `MAGNESIUM` · `CALCIUM` · `SALINITY` · `AMMONIA` · `NITRITE`
+- `parameter`: `PH` · `ALKALINITY` · `MAGNESIUM` · `CALCIUM` · `POTASSIUM` · `SALINITY` · `AMMONIA` · `NITRITE`
 
 ### Dosing preview (ประเมินไม่บันทึก)
 | Method | Path | หมายเหตุ |
@@ -277,9 +279,10 @@
 | Method | Path | คืนอะไร |
 |---|---|---|
 | GET | `/api/dashboard/overview?systemId` | `{ systemCount, crabs{by status}, boxes{by status}, pendingTasks, finance{totalIncome,totalExpense,net} }` |
-| GET | `/api/dashboard/finance?systemId&from&to` | `{ totalIncome, totalExpense, net, entryCount, byCategory[], byMonth[] }` (pain point #2) |
+| GET | `/api/dashboard/finance?systemId&from&to&includeUnassigned` | `{ totalIncome, totalExpense, net, entryCount, byCategory[], byMonth[] }` (pain point #2) |
 | GET | `/api/dashboard/crabs?systemId` | `{ soldCount, totalProfit, avgProfit, avgDurationDays, avgProfitPerDay, avgWeightG, avgFirmnessPct, byStatus, items[] }` (pain point #3) |
 
+- แยกบัญชีต่อระบบ: เมื่อส่ง `systemId` จะกรอง **เฉพาะระบบนั้น** (ไม่รวมรายการส่วนกลาง `systemId=null`); ส่ง `includeUnassigned=true` เพื่อรวมรายการที่ไม่ผูกระบบเข้าไปด้วย
 - `byCategory[]`: `{ category, income, expense, net }`
 - `byMonth[]`: `{ month("YYYY-MM"), income, expense, net }`
 - `items[]` (crabs): `{ id, code, type, weightG, currentFirmnessPct, purchasePrice, sellPrice, profit, durationDays, profitPerDay }`

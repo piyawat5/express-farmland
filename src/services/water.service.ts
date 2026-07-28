@@ -74,7 +74,7 @@ export async function getWaterTest(id: number, user?: AuthUser) {
   return test;
 }
 
-const WATER_FIELDS = ['ph', 'alkalinity', 'magnesium', 'calcium', 'salinity', 'ammonia', 'nitrite'] as const;
+const WATER_FIELDS = ['ph', 'alkalinity', 'magnesium', 'calcium', 'potassium', 'salinity', 'ammonia', 'nitrite'] as const;
 
 /**
  * ค่าน้ำ "ปัจจุบันที่รู้ล่าสุด" (ข้อ 2.1) — รวมจากประวัติย้อนหลัง โดยแต่ละพารามิเตอร์

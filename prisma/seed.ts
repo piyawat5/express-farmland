@@ -33,6 +33,7 @@ const WATER_TARGETS: { parameter: WaterParam; unit: string }[] = [
   { parameter: 'ALKALINITY', unit: 'หยด' }, // วัดแบบ titration → นับหยด
   { parameter: 'MAGNESIUM', unit: 'ppm' },
   { parameter: 'CALCIUM', unit: 'ppm' },
+  { parameter: 'POTASSIUM', unit: 'ppm' }, // โพแทสเซียม (K)
   { parameter: 'SALINITY', unit: 'ppt' },
   { parameter: 'AMMONIA', unit: 'ppm' },
   { parameter: 'NITRITE', unit: 'ppm' },
@@ -51,6 +52,7 @@ const SUBSTANCES: {
   { name: 'แร่ธาตุรวม', category: 'MINERAL', unit: 'ช้อนแกง' },
   { name: 'แมกนีเซียม', category: 'MINERAL', unit: 'ช้อนแกง' },
   { name: 'แคลเซียม', category: 'MINERAL', unit: 'ช้อนแกง' },
+  { name: 'โพแทสเซียม', category: 'MINERAL', unit: 'ช้อนแกง', note: 'แร่ธาตุ K — ปรับค่าโพแทสเซียม' },
   { name: 'เบกกิ้งโซดา', category: 'MINERAL', unit: 'ช้อนแกง', note: 'ใช้ดัน alkalinity ขึ้น' },
   { name: 'เกลือ', category: 'MINERAL', unit: 'กรัม', note: 'ปรับ salinity' },
   {
