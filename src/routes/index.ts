@@ -4,6 +4,7 @@ import authRoutes from './auth';
 import { requireAuth } from '../middleware/auth';
 import { systemRouter, boxRouter, filterTankRouter } from './systems';
 import crabRoutes from './crabs';
+import { feedingSystemRouter, feedingRoundRouter } from './feeding';
 import { waterSystemRouter, waterTestRouter } from './water';
 import { substanceRouter, dosingSystemRouter, calibrationRouter, ruleRouter } from './dosing';
 import { schedulerRouter, reminderRuleRouter, taskRouter, systemEventRouter } from './scheduler';
@@ -30,6 +31,9 @@ api.use('/boxes', boxRouter);
 api.use('/filter-tanks', filterTankRouter);
 // B. ปู
 api.use('/crabs', crabRoutes);
+// B2. แผนให้อาหาร + รอบบันทึกการกิน (Phase 21)
+api.use('/systems', feedingSystemRouter);
+api.use('/feeding-rounds', feedingRoundRouter);
 // C. น้ำ + การปรุงน้ำ (หลาย router ซ้อนบน /systems ได้ — แยกตามโมดูล)
 api.use('/systems', waterSystemRouter);
 api.use('/systems', dosingSystemRouter);

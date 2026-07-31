@@ -65,6 +65,16 @@ router.get(
   }),
 );
 
+/** ค่าตั้งค่า UI ต่อผู้ใช้ (merge) — ใช้จำว่าใครติ๊ก "ไม่ต้องแสดงโหมดสอนอีก" (Phase 22) */
+router.patch(
+  '/me/prefs',
+  requireAuth,
+  validate({ body: z.record(z.string(), z.unknown()) }),
+  asyncHandler(async (req, res) => {
+    res.json(await auth.updateUiPrefs(req.user!.id, req.body as Record<string, unknown>));
+  }),
+);
+
 // ── OAuth (Google / LINE) — login with provider (ข้อ 1.2.3) ───────────
 // start: เด้งไปหน้า consent ของ provider
 router.get(

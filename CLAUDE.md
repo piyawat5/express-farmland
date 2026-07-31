@@ -4,6 +4,37 @@
 > อัปเดตทุกครั้งที่มี decision สำคัญ / สร้าง module ใหม่ / เปลี่ยน schema
 
 ## 👉 ทำต่อจากตรงนี้ (NEXT — session ใหม่อ่านตรงนี้ก่อน)
+### 🍤 แผนให้อาหาร + รอบบันทึกการกิน (realtime) + โหมดสอน + ธีม + รายงานมือถือ (2026-07-31) — BE tsc + FE build ผ่าน, ✅ migration apply แล้ว, ✅ smoke test BE ผ่านหมด
+แผน: `C:\Users\piyawat\.claude\plans\1-theme-sharded-quiche.md`
+- **migration ใหม่ 2 ตัว ✅ apply ลง DB จริงแล้ว** (รวมเป็น 17 migrations): `phase21_feeding_rounds` (3 ตารางใหม่ `FeedingPlan`/`FeedingRound`/`FeedingEntry` + enum `FeedingRoundStatus` — **ไม่ ALTER ตารางเดิมเลย**) และ `phase22_user_ui_prefs` (`User.uiPrefs Json?`)
+- **ข้อ 2 แผนให้อาหาร (BE):** `lib/feedingCycle.ts` (pure, mirror `lib/cron.ts`) — `isFeedDay`/`nextFeedRunAt`/`ymdLocal`/`previewFeedDays`/`scoreFromTags`; วงรอบ "ให้ N วัน เว้น M วัน" คำนวณจาก `anchorDate` เพราะ **cron เขียนไม่ได้** (คาบไม่หารลงตัวกับเดือน). ทดสอบครบ 5 รูปแบบ (1/0, 1/1, 2/1, 3/1, 2/2) + modulo ติดลบ (anchor อนาคต)
+  - ⚠️ **ห้ามใช้ `toISOString().slice(0,10)` ทำ `feedDate`** — เป็น UTC ทำให้ช่วง 00:00–07:00 น. ได้วันเมื่อวาน (ยืนยันแล้วว่าเกิดจริง) → ใช้ `ymdLocal` เท่านั้น
+  - **ตั้งใจไม่ผูกกับ `ReminderRule`**: ถ้าผูก การกด "ทำเสร็จแล้ว" จะไป recompute `nextRunAt` ด้วย `minAdvance` (`task.service.ts:226`) → วงรอบหลุด anchor. สร้าง `Task` ตรง ๆ (`ruleId=null`, `linkType:'FeedingRound'`) 2 ใบต่อรอบ (`FEEDING` + `SCRAP_COLLECT`) → ได้เมลสรุป/หน้างาน/ปฏิทินครบเหมือนเดิม
+  - `services/feeding.service.ts` + `routes/feeding.ts` (mount `/systems` + `/feeding-rounds`) + resolver `systemIdFromFeedingRound`; `scheduler.tick` เรียก `generateFeedingRounds` + มี `feedingRounds` ใน `TickResult`
+  - **เปิดรอบ 2 ทาง (idempotent):** tick + lazy ตอน `GET .../feeding-round/current` — กันชนด้วย `@@unique([systemId, feedDate])` (จับ P2002)
+  - **ไม่ regress ของเดิม:** `recordEntry` เขียน `Crab.feedingNote`/`lastFedAt` + `CrabHistory` โซน FEEDING (คีย์ `feedingNote`/`fedAt` เดิม) — บันทึกซ้ำตัวเดิม = **update แถวประวัติเดิม ไม่สร้างซ้ำ** (`FeedingEntry.historyId`); `lastFedAt = round.dueAt` ไม่ใช่ `now` (บันทึกตอนเก็บเศษ ช้ากว่า 2–3 ชม.)
+  - **ปิดรอบครั้งเดียวเสมอ:** conditional `updateMany({id, status:'OPEN'})` → 2 คนกดตัวสุดท้ายพร้อมกัน มีคนเดียวที่ `count===1` → พลุไม่ซ้ำ
+- **ข้อ 2.6 WebSocket (`ws`):** `lib/realtime.ts` เกาะ `server` handle ใน `server.ts` (ไม่แตะ `createApp` → ไม่มี import cycle); **auth ผ่าน subprotocol `['jwt', token]`** (browser ตั้ง header ไม่ได้), ห้อง = systemId (สิทธิ์จาก `ownedSystemIds` ครั้งเดียวตอนต่อ), heartbeat 30 วิ, `closeRealtime()` ก่อน `server.close()` (ไม่งั้นค้าง); env ใหม่ `REALTIME_ENABLED`/`WS_PATH`/`WS_HEARTBEAT_SEC`; `GET /api/health` คืน `realtime:{enabled,path}`
+  - **FE ถอยเป็น polling อัตโนมัติ** ถ้าต่อไม่ติดใน 4 วิ หรือหลุด 2 ครั้งติด (เผื่อ Plesk/Passenger ไม่ proxy upgrade) — payload เหมือนกันเป๊ะ ไม่ต้องแก้ server
+- **FE (`CrabsView` เป็นหลัก):** `lib/realtime.ts` (client + fallback), `feedingApi`, `components/FeedingPlanDialog.vue` (preset วันเว้นวัน/2เว้น1/3เว้น1/2เว้น2 + พรีวิว 14 วัน), `FeedingQuestHud.vue` (เลขเควสกลางจอ ข้อ 2.4), `FeedingCelebration.vue` (พลุ + สถิติเวลา/กินปกติ ข้อ 2.5), แถบรอบ + **ป้าย 🍤 บนกล่องที่ยังบันทึกไม่ครบ (ข้อ 2.7)** + ปุ่ม "บันทึกการกินรอบนี้" ทีละตัวใน popup + **โหมดหลอดพลัง** (`v-btn-toggle`, เฉลี่ย 5 รอบล่าสุด ข้อ 2.3)
+- **ข้อ 3 โหมดสอน:** `lib/tour.ts` (11 ขั้น: รับปูเข้าล็อต → ตารางกล่อง → แผนอาหาร → บันทึกการกิน → หลอดพลัง → วัดค่าน้ำ → งาน → จองปู → ใบเสร็จ → รายงาน) + `components/TourOverlay.vue` (spotlight เจาะรูด้วย `box-shadow 0 0 0 9999px`, พาข้ามหน้าเอง, **หา target ไม่เจอ → ถอยเป็นการ์ดกลางจอ ไม่ค้าง**); `data-tour` 8 จุดใน CrabsView/WaterView/CommerceView; จำต่อ user ที่ `User.uiPrefs` + `PATCH /api/auth/me/prefs` (+ localStorage กันกระพริบ); เล่นซ้ำได้จากเมนูโปรไฟล์
+- **ข้อ 1 ธีม:** `.theme-decor` เปลี่ยน `position:absolute; inset:0` → **`position:fixed` + `top:var(--v-layout-top)`** (Vuetify ตั้งตัวแปรนี้บน `v-main`) → แก้ทั้ง "โคมโดน navbar ทับ" และ "ของยึดล่างไปอยู่ก้นเพจ" ทีเดียว; คริสต์มาส **ต้นไม้ → สโนว์แมน** (มุมบน), สิงโต/เด็กสงกรานต์ย้ายขึ้นบน, opacity 0.13→0.18; **สงกรานต์รื้อใหม่** (สายน้ำโค้ง + เจดีย์ทรายมีธง + ขันเงิน + ดอกคูนร่วง + น้ำสาดเป็นวง แทนหยดน้ำตกตรง ๆ ที่ดูเป็นฝน); วาเลนไทน์ไม่แตะ
+- **ข้อ 4 รายงานมือถือ:** `components/ScrollHint.vue` (เงาขอบ + **ลูกศรกลมลอยกดเลื่อนได้**, ตรวจด้วย ResizeObserver/MutationObserver) ใช้กับ dialog ไซส์/ราคา + dialog ต้นทุน + ตารางรายงานหลัก; ช่อง input ใส่ `min-width` (เรท 94px / ตัวเลข 104px)
+- ✅ **smoke test BE ผ่านหมด** (สร้าง user ชั่วคราว → ลบทิ้งแล้ว): พรีวิววงรอบ, WS 2 เครื่องเห็นตัวนับพร้อมกัน, token ผิด→4401, celebrated ครั้งเดียว, ประวัติ FEEDING ไม่ซ้ำตอนแก้ซ้ำ, ปิดรอบ→Task DONE ทั้ง 2 ใบ, หลอดพลัง (ลืมบันทึก≠0), lazy open + nextDueAt ไม่ค้าง, uiPrefs merge
+- ⚠️ **ยังไม่ทดสอบบนเบราว์เซอร์จริง** — รอผู้ใช้เทส: ฉากธีมแต่ละเทศกาล (5 ธีม × light/dark × มือถือ), ตั้งแผนอาหาร + บันทึก 2 เครื่องพร้อมกัน (ตัวนับ + พลุต้องขึ้นทั้งคู่), โหมดสอน, ตารางไซส์/ราคาบนมือถือ
+- ⏭️ **ถ้า WS ใช้ไม่ได้บน Plesk จริง** → ตั้ง `REALTIME_ENABLED=false` ก็จบ (หน้าเว็บทำงานต่อได้ด้วย polling ทุก 5 วิ ไม่ต้องแก้โค้ด)
+
+### 🐞 รอบฟีดแบ็ค 6 ข้อ: freeze รายงาน + ผู้ซื้อในรายงาน + อายุปู + รับล็อต + ฉากธีม + ดัก disabled รูป (2026-07-30) — FE-only, `vue-tsc`+`vite build` ผ่าน, ไม่ต้อง migrate
+- **ข้อ 1 (freeze cell รายงานทับ):** คอลัมน์ "ราคาล็อต" ใช้ rowspan → กฎ `.freeze-first td:first-child` (global.css) ไปตรึง "กล่อง No" ของแถวต่อเนื่องแทน (ทับตอนเลื่อน X); แก้ใน `styles/global.css` เพิ่ม override `.v-table.freeze-first.report-table` → `td:first-child{position:static}` + `td.lot-cell{position:sticky;left:0}` (เพิ่มคลาส `.report-table` = specificity สูงกว่า ชนะกฎทั่วไป)
+- **ข้อ 2 (รายงานไม่โชว์ผู้ซื้อ):** ปูที่ขายแล้ว txn เป็น `DONE` (ไม่ใช่ QUOTE/CONFIRMED) + `crab.buyerId` ถูกเซ็ต; `lib/reservations.parseReservationContacts` เดิมนับแค่ QUOTE/CONFIRMED → เพิ่ม `DONE`; `ReportView` reserver = `c.buyerId ?? reservationContacts.get(id)` (buyerId เป็น source of truth), header "ผู้จอง"→"ผู้จอง/ผู้ซื้อ"
+- **ข้อ 3 (อายุปู "14d" ไม่แสดง):** `CrabsView.ageDays` เดิมใช้แค่ `purchaseDate` → ปูที่เพิ่มผ่านหน้ากล่อง (ไม่กรอกวันซื้อ) = null; แก้เป็น `daysSince(purchaseDate ?? lastCheckedAt)` (lastCheckedAt ดีฟอลต์วันนี้ตอนสร้างปูใหม่)
+- **ข้อ 4.1 (รับล็อตไม่มีช่องราคา):** ย้ายช่อง "ราคารวมทั้งล็อต" ไปโซน "ค่าตั้งต้นของล็อต" (แสดงตั้งแต่ต้น ไม่ต้องรอบันทึกปูตัวแรก); ตารางแบ่งราคาตามน้ำหนักยังอยู่ล่าง
+- **ข้อ 4.2 (ปิด dialog กลางคันไม่รีเฟรช):** `watch(intakeDialog)` — ปิดโดยไม่กด "จบล็อต" ขณะมีปูบันทึกแล้ว (`intakeList.length>0 && !intakeFinishing`) → `withScrollPreserved(reload)`
+- **ข้อ 4.3 (จัดล็อตย้อนหลัง + โชว์ล็อต):** เพิ่ม dialog "จัดล็อตย้อนหลัง" (`retro*`) — เลือกปูที่เลี้ยงอยู่ (มีปุ่ม "เลือกที่ยังไม่มีราคา") + กรอกผู้ขาย/วันที่/ราคารวม → set `sourceSellerId`+`purchaseDate` เท่ากัน + แบ่ง `purchasePrice` ตามน้ำหนัก + ลง BUY; เพิ่ม `sourceSellerId` เข้า CrabForm + v-select "ผู้ขาย (ที่มา/ล็อต)" + ป้าย "ล็อต: <วันซื้อ> · <ผู้ขาย>" ในโซนที่มา&ต้นทุน; intake `saveIntakeCrab` เซ็ต `sourceSellerId` ให้ตรงกลุ่มล็อตด้วย (`crabBody` zod มี sourceSellerId อยู่แล้ว ไม่ต้องแก้ BE)
+- **ข้อ 5 (ฉากอนิเมชันตามธีม):** ไฟล์ใหม่ `components/ThemeDecor.vue` (SVG/CSS ล้วน, pointer-events:none, `prefers-reduced-motion` ปิด) mount ใน `App.vue` ใต้ `v-main` (`.app-main{position:relative}` + `.app-content{z-index:1}` ให้ฉาก absolute อยู่หลังเนื้อหา): christmas=ต้นคริสต์มาส+หิมะตก, cny=เชิดสิงโต+โคม+พลุ, valentine=หัวใจจาง+ลูกโป่งหัวใจลอย, songkran=เด็กเสื้อลายดอกถือปืนฉีดน้ำ+หยดน้ำ; base=ไม่มีฉาก
+- **ข้อ 6 (ดัก disabled ปุ่มบันทึกตอนอัปรูป):** เดิมปุ่มบันทึก **ไม่** disable ระหว่างอัปรูป → กดก่อนอัปเสร็จ = รูปไม่ถูกแนบ; เพิ่ม `:disabled="imgUploading"` ให้ปุ่ม saveAll (หน้ากล่อง) + saveIntakeCrab (รับล็อต), `:disabled="editHistUploading"` ให้ saveEditHist (แก้รอบ) + ป้าย "กำลังอัปโหลดรูป…"
+- ⚠️ ยังไม่ทดสอบ browser จริง (build ผ่าน) — รอผู้ใช้เทส freeze รายงานเลื่อน X, ผู้ซื้อในรายงาน, ฉากธีมแต่ละเทศกาล, จัดล็อตย้อนหลัง
+
 ### 📊 เมนู "รายงาน" (Report) แบบ Excel + แยกบัญชีต่อระบบ + อนิเมชันปู (2026-07-29) — BE tsc + FE build ผ่าน, ✅ migration apply แล้ว
 แผน: `C:\Users\piyawat\.claude\plans\lexical-humming-church.md`
 - **migration ใหม่ `phase20_report_settings`** ✅ apply ลง DB จริงแล้ว: `CrabSystem.reportSettings Json?` เก็บ `{ fixedCosts:[{label,monthly}], daysPerMonth, boxCount, sizeTiers:[{label,minG,maxG,pricePerKilo,divisorG}] }`; zod ใน `routes/systems.ts` + `normalizeSystemData` (null→`Prisma.DbNull` mirror `receiptSettings`); regenerate client แล้ว
@@ -349,6 +380,8 @@ prisma/schema.prisma
 - [x] **Phase 5** — โมดูล E: Contact, Transaction (QUOTE/กำไร preview), OutreachLog (ไล่ทักต่อรอบ) ✅
 - [x] **Phase 6** — โมดูล F: LedgerEntry (CRUD + hook Transaction→DONE) + Dashboard/analytics endpoints ✅
 - [x] **Phase 7** — seed ข้อมูลจริง: โครงสร้างครบตั้งแต่ Phase 2–5; ผู้ใช้เลือกไม่ seed ข้อมูลปลอม (กรอกผ่าน API) ✅
+- [x] **Phase 21** — โมดูล B2: `FeedingPlan`/`FeedingRound`/`FeedingEntry` (วงรอบ N วันเว้น M วัน) + WebSocket realtime ✅
+- [x] **Phase 22** — `User.uiPrefs` (จำสถานะโหมดสอนต่อผู้ใช้) ✅
 
 ## Seed data (ทำพร้อม Phase 2) — `prisma/seed.ts`
 ข้อมูลจริงของผู้ใช้ที่ต้อง seed:
@@ -369,6 +402,13 @@ prisma/schema.prisma
 > ค่าตัวเลขจริง (min/max, ปริมาณสาร, รอบวัน) ให้ถามผู้ใช้ตอนทำ seed เพราะผู้ใช้ custom เอง
 
 ## Log การเปลี่ยนแปลง
+- **2026-07-31** — **แผนให้อาหาร + รอบบันทึกการกิน (WebSocket) + โหมดสอน + ธีม + รายงานมือถือ** (แผน `1-theme-sharded-quiche.md`) — BE tsc + FE build ผ่าน, ✅ migration apply แล้ว, ✅ smoke test BE ผ่านหมด:
+  - **migration `phase21_feeding_rounds`** (3 ตารางใหม่ ไม่ ALTER ของเดิม) + **`phase22_user_ui_prefs`** (`User.uiPrefs Json?`) — apply ลง DB จริงแล้วทั้งคู่ (17 migrations)
+  - **dep ใหม่ (BE):** `ws` + `@types/ws` (⚠️ `ws` ต้องอยู่ใน `dependencies` — Plesk ติดตั้งแบบ production); **env ใหม่:** `REALTIME_ENABLED`/`WS_PATH`/`WS_HEARTBEAT_SEC`
+  - ไฟล์ใหม่ BE: `lib/feedingCycle.ts`, `lib/realtime.ts`, `services/feeding.service.ts`, `routes/feeding.ts`
+  - ไฟล์ใหม่ FE: `lib/realtime.ts`, `lib/tour.ts`, `components/{FeedingPlanDialog,FeedingQuestHud,FeedingCelebration,TourOverlay,ScrollHint}.vue`
+  - **gotcha ที่เจอจริง:** (1) `toISOString().slice(0,10)` เป็น UTC → ตี 2 ได้วันเมื่อวาน (ต้องใช้ `ymdLocal`); (2) `v-else-if` ข้ามระดับ `<v-slide-y-transition>` ไม่ได้ (compile error); (3) Prisma `update` ในทรานแซกชันโยน P2025 ถ้าแถวถูกลบ → ใช้ `updateMany` + เช็ค `count` แทน
+- **2026-07-29** — เมนู "รายงาน" + แยกบัญชีต่อระบบ + อนิเมชันปู (ดูหัวข้อ NEXT ด้านบน)
 - **2026-07-09** — **กดขยายรูปทุกที่ + สรุปรูปล่าสุด + ใบเสร็จคัสตอม + จองปู + แก้ UI** (แผน `sleepy-humming-eagle.md`) — BE+FE typecheck + FE build ผ่าน, ยังไม่ apply migration/ทดสอบ server:
   - **migration `phase16_receipt_settings`** (ยังไม่ apply): `CrabSystem.receiptSettings Json?`; `normalizeSystemData` + zod รองรับ; regenerate client แล้ว — ⚠️ ต้อง `prisma migrate deploy` ก่อนรัน server
   - FE ใหม่: `lib/imageZoom.ts`, `components/ImageZoomOverlay.vue` (mount App.vue), `lib/imageShare.ts`

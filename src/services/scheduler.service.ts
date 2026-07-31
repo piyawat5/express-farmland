@@ -3,6 +3,7 @@ import { notifyPendingDigest } from '../lib/notify';
 import { createTaskFromRule, hasOpenTaskForRule } from './task.service';
 import { computeNextRunAt } from './reminder.service';
 import { generateRestockTasks } from './inventory.service';
+import { generateFeedingRounds } from './feeding.service';
 
 // ── โมดูล D: Scheduler — เรียกจาก Plesk Scheduled Task (cron) ทุกรอบ ──
 //
@@ -17,6 +18,7 @@ export type TickResult = {
   now: string;
   generated: number; // จำนวน Task ที่สร้างใหม่จากกฎ
   restock: number; // จำนวน Task RESTOCK ที่สร้างใหม่จากของใกล้หมด
+  feedingRounds: number; // จำนวนรอบให้อาหารที่เปิดใหม่ (Phase 21)
   pending: number; // จำนวนงานค้างทั้งหมดที่ถึงกำหนด
   emailsSent: number; // จำนวนเมลสรุปที่ส่ง (0 = ไม่มีงานค้าง/ส่งไม่สำเร็จ)
 };
@@ -47,6 +49,8 @@ async function generateDueTasks(now: Date): Promise<number> {
 export async function tick(now = new Date()): Promise<TickResult> {
   const generated = await generateDueTasks(now);
   const restock = await generateRestockTasks(now); // ของใกล้หมด → Task RESTOCK
+  // แผนให้อาหารที่ถึงรอบ → เปิดรอบ + สร้าง Task ให้อาหาร/เก็บเศษ (Phase 21)
+  const feedingRounds = await generateFeedingRounds(now);
   // ยกเลิกงานเช็คไข่/เนื้อ (CRAB_CHECK) ที่ค้างอยู่ — เอาฟีเจอร์นี้ออกแล้ว (ผู้ใช้ไม่ต้องการ)
   await cancelCrabCheckTasks();
   const digest = await notifyPendingDigest(now);
@@ -54,6 +58,7 @@ export async function tick(now = new Date()): Promise<TickResult> {
     now: now.toISOString(),
     generated,
     restock,
+    feedingRounds,
     pending: digest.pending,
     emailsSent: digest.recipients,
   };

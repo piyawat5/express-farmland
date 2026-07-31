@@ -31,6 +31,8 @@ model User {
   avatarUrl     String?  @db.Text // รูปโปรไฟล์จาก OAuth (Google/Line) — ข้อ 4.5
   notifyByEmail Boolean  @default(true)
   active        Boolean  @default(true)
+  /// ค่าตั้งค่า UI ต่อผู้ใช้ — { tourDoneAt, tourSkipped, tourVersion } (Phase 22: โหมดสอน)
+  uiPrefs       Json?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -46,6 +48,7 @@ model User {
   dosingRules   DosingRule[]
   reminderRules ReminderRule[]
   ledgerEntries LedgerEntry[]
+  feedingEntries FeedingEntry[] // การกินที่ผู้ใช้นี้เป็นคนบันทึก (Phase 21)
 }
 
 /// บัญชี OAuth ที่ผูกกับ user (login with Google/Line — ไม่เก็บ password, ข้อ 1.2.3)
@@ -132,6 +135,8 @@ model CrabSystem {
   reminderRules ReminderRule[]
   tasks         Task[]
   ledgerEntries LedgerEntry[]
+  feedingPlan   FeedingPlan? // แผนให้อาหารของระบบนี้ (Phase 21)
+  feedingRounds FeedingRound[]
 }
 
 enum SystemStatus {
@@ -226,6 +231,7 @@ model Crab {
   firmnessLogs FirmnessRecord[]
   transactions Transaction[]
   history      CrabHistory[] // ประวัติการแก้ไขแยกโซน (ข้อ 8)
+  feedingEntries FeedingEntry[] // การกินรายรอบ (Phase 21)
 
   @@index([systemId, deletedAt])
 }
@@ -284,6 +290,93 @@ enum EatingLevel {
   LOTS // กินเยอะ
   LITTLE // กินน้อย
   NONE // ไม่กิน
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  B2. แผนให้อาหาร + รอบให้อาหาร (Phase 21)
+//      cron มาตรฐานเขียน "N วันเว้น M วัน" ไม่ได้ (คาบไม่หารลงตัวกับเดือน)
+//      → คำนวณเองจาก anchorDate ใน src/lib/feedingCycle.ts
+//      ตั้งใจแยกจาก ReminderRule เพราะถ้าผูกกัน การกด "ทำเสร็จแล้ว" จะไป
+//      recompute nextRunAt (minAdvance) ทำให้วงรอบหลุด anchor
+// ─────────────────────────────────────────────────────────────────────
+
+/// แผนให้อาหารของ 1 ระบบ — รอบแบบ "ให้ onDays วัน เว้น offDays วัน"
+/// วันเว้นวัน = 1/1 · 2 วันเว้น 1 = 2/1 · 3 เว้น 1 = 3/1 · 2 เว้น 2 = 2/2 · ทุกวัน = 1/0
+model FeedingPlan {
+  id              Int        @id @default(autoincrement())
+  system          CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId        Int        @unique // 1 ระบบ = 1 แผน
+  onDays          Int        @default(1) // ให้อาหารติดกันกี่วัน
+  offDays         Int        @default(1) // แล้วเว้นกี่วัน (0 = ให้ทุกวัน)
+  anchorDate      DateTime // วันแรกของช่วง "ให้" — จุดอ้างอิงของวงรอบ
+  timeOfDay       String     @default("20:00") // เวลาให้อาหาร "HH:mm" (เวลาไทย)
+  recordLeadHours Int        @default(3) // เดินเก็บเศษ+บันทึกการกิน หลังให้อาหารกี่ ชม.
+  active          Boolean    @default(true)
+  nextDueAt       DateTime? // รอบถัดไปที่ต้องเปิด (mirror ReminderRule.nextRunAt)
+  lastRunAt       DateTime?
+  note            String?    @db.Text
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  rounds FeedingRound[]
+}
+
+/// รอบให้อาหาร 1 รอบ = 1 วันที่ให้อาหาร ต่อ 1 ระบบ
+/// เปิดตอนถึงเวลาให้อาหาร → ปิดเมื่อบันทึกการกินครบทุกตัว (2 คนช่วยกันบันทึกคนละเครื่องได้)
+model FeedingRound {
+  id            Int                @id @default(autoincrement())
+  system        CrabSystem         @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId      Int
+  plan          FeedingPlan?       @relation(fields: [planId], references: [id], onDelete: SetNull)
+  planId        Int? // null = รอบที่เปิดเองนอกแผน
+  feedDate      String             @db.Char(10) // "YYYY-MM-DD" เวลาไทย — คีย์กันสร้างซ้ำ (TZ-proof)
+  dueAt         DateTime // เวลาให้อาหารจริงของรอบนี้ (feedDate + timeOfDay)
+  recordDueAt   DateTime // เวลาที่ต้องเดินเก็บเศษ + บันทึกการกิน
+  status        FeedingRoundStatus @default(OPEN)
+  startedAt     DateTime? // เวลาบันทึกปูตัวแรก (ใช้คิดเวลาที่ใช้ทั้งรอบ)
+  completedAt   DateTime? // เวลาบันทึกปูตัวสุดท้าย = ปิดรอบ
+  expectedCount Int                @default(0) // จำนวนปูที่ต้องบันทึก (snapshot ตอนเปิดรอบ)
+  recordedCount Int                @default(0) // สรุปตอนปิดรอบ
+  normalCount   Int                @default(0) // "กินปกติ" (score = 100) กี่ตัว
+  avgScore      Float? // คะแนนเฉลี่ยของรอบ 0–100
+  elapsedSec    Int? // startedAt → completedAt (วินาที) — โชว์ในป๊อปอัพฉลอง
+  feedingTaskId Int? // Task FEEDING ของรอบนี้
+  scrapTaskId   Int? // Task SCRAP_COLLECT (เก็บเศษ + บันทึกการกิน)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  entries FeedingEntry[]
+
+  @@unique([systemId, feedDate]) // 1 ระบบ 1 รอบต่อวัน — กันสร้างซ้ำจาก tick + lazy GET พร้อมกัน
+  @@index([systemId, status])
+  @@index([systemId, dueAt])
+}
+
+/// การกินของปู 1 ตัว ใน 1 รอบ — บันทึกตอนไปเก็บเศษ (2–3 ชม.หลังให้อาหาร)
+model FeedingEntry {
+  id               Int          @id @default(autoincrement())
+  round            FeedingRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  roundId          Int
+  crab             Crab         @relation(fields: [crabId], references: [id], onDelete: Cascade)
+  crabId           Int
+  boxId            Int? // snapshot กล่องตอนบันทึก (ปูอาจย้ายกล่องภายหลัง)
+  tags             Json // ป้ายการกินเดิม ["กินปลาปกติ","กินหอยปกติ",...]
+  note             String?      @db.Text
+  score            Int // 0–100 (ปลา+หอยปกติ=100 / อย่างใดอย่างหนึ่ง=65 / กินน้อย=35 / ไม่กิน=0)
+  recordedBy       User?        @relation(fields: [recordedByUserId], references: [id], onDelete: SetNull)
+  recordedByUserId Int?
+  recordedAt       DateTime     @default(now())
+  historyId        Int? // CrabHistory (โซน FEEDING) ที่แถวนี้สร้าง — แก้ซ้ำแล้วไม่เกิดประวัติซ้ำ
+  updatedAt        DateTime     @updatedAt
+
+  @@unique([roundId, crabId]) // 2 คนกดพร้อมกัน = แถวเดียว (upsert)
+  @@index([crabId, recordedAt]) // หลอดพลัง: ดึงคะแนนย้อนหลังต่อปู
+}
+
+enum FeedingRoundStatus {
+  OPEN // เปิดอยู่ — กำลังไล่บันทึกทีละตัว (ป้ายขึ้นบนกล่อง)
+  COMPLETED // บันทึกครบทุกตัว (หรือปิดเอง)
+  SKIPPED // ข้าม / ถูกแทนที่ด้วยรอบใหม่
 }
 
 /// บันทึก %ความแน่นเนื้อ/ไข่ — ใช้ทำสถิติ "กี่วันถึงแน่น" (ข้อ 3.5)

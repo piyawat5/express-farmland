@@ -21,7 +21,8 @@
 | POST | `/api/auth/login` | `{ email*, password* }` | `{ accessToken, refreshToken, user }` |
 | POST | `/api/auth/refresh` | `{ refreshToken* }` | `{ accessToken, refreshToken, user }` (rotate — token เดิมใช้ไม่ได้อีก) |
 | POST | `/api/auth/logout` | `{ refreshToken? }` | `204` (revoke refresh token) |
-| GET | `/api/auth/me` | — (ต้องมี Bearer) | `{ id, email, name, role }` |
+| GET | `/api/auth/me` | — (ต้องมี Bearer) | `{ id, email, name, role, avatarUrl, uiPrefs }` |
+| PATCH | `/api/auth/me/prefs` | `{ <key>: <value>, ... }` (merge ทับของเดิม) | user object — ใช้จำ `{tourDoneAt, tourSkipped, tourVersion}` ของโหมดสอน (Phase 22) |
 
 - `user` = `{ id, email, name, role:("ADMIN"\|"FARM_OWNER") }`
 - access token อายุ `ACCESS_TOKEN_TTL` (default 15m), refresh `REFRESH_TOKEN_TTL` (default 30d)
@@ -117,6 +118,53 @@
 - `lastCheckedAt` = วันเช็คไข่/เนื้อล่าสุด (ข้อ 3,8) — ถ้าบันทึกค่าวัด (weight/firmness) โดยไม่ส่งมา → auto = วันนี้; ใช้คิด due ของ Task `CRAB_CHECK`
 - **`GET /api/crabs/:id` คืน `history[]`** (ข้อ 8): `[{ id, zone('MEASURE'|'CLASSIFY'|'FEEDING'|'SOURCE'), snapshot(Json), recordedAt }]` เรียงใหม่→เก่า — `PATCH` บันทึก `CrabHistory` **เฉพาะโซนที่ค่าเปลี่ยนจริง**; แก้โซน MEASURE → ปิด Task `CRAB_CHECK` ของปูตัวนั้น
 - **gotcha:** ผูกปูเข้ากล่อง (`boxId`) → backend sync `CrabBox.status` (มีปูเป็นๆ ≥1 = OCCUPIED); **ไม่กันจำนวนปูต่อกล่องแล้ว** (เดิมกัน 1 ตัว/กล่อง)
+
+## B2. แผนให้อาหาร & รอบบันทึกการกิน (Phase 21)
+
+| Method | Path | หมายเหตุ |
+|---|---|---|
+| GET | `/api/systems/:id/feeding-plan` | แผน + พรีวิว 14 วัน → `{ plan, preview:[{date,feed}] }` |
+| PUT | `/api/systems/:id/feeding-plan` | สร้าง/แก้แผน — body `{ onDays*, offDays*, anchorDate*, timeOfDay*, recordLeadHours?, active?, note? }` |
+| DELETE | `/api/systems/:id/feeding-plan` | ลบแผน (204) |
+| GET | `/api/systems/:id/feeding-round/current` | รอบที่เปิดอยู่ + แผน → `{ plan, round }`; **เปิดรอบให้แบบ lazy ถ้าถึงเวลาแล้วแต่ cron ยังไม่ยิง** |
+| POST | `/api/systems/:id/feeding-round/open` | เปิดรอบเอง (นอกแผน) — body `{ at? }` → `RoundProgress` (201) |
+| GET | `/api/systems/:id/feeding-rounds?take&skip` | ประวัติรอบ + สถิติ (อ่านจากคอลัมน์ denormalize) |
+| GET | `/api/systems/:id/feeding-energy?rounds=5` | **หลอดพลัง** — คะแนนการกินเฉลี่ย N รอบล่าสุดต่อปู |
+| GET | `/api/feeding-rounds/:id` | snapshot รอบ |
+| POST | `/api/feeding-rounds/:id/entries` | **บันทึกการกินปู 1 ตัว** — body `{ crabId*, tags[]*, note? }` → `{ round, celebrated }` |
+| DELETE | `/api/feeding-rounds/:id/entries/:crabId` | ยกเลิกการบันทึกของปูตัวนั้น |
+| POST | `/api/feeding-rounds/:id/close` | ปิดรอบทั้งที่ยังบันทึกไม่ครบ |
+| POST | `/api/feeding-rounds/:id/skip` | ข้ามรอบ (ไม่ได้ให้อาหารวันนั้น) |
+
+- **วงรอบ:** `onDays/offDays` = "ให้ N วัน เว้น M วัน" — วันเว้นวัน=`1/1` · 2เว้น1=`2/1` · 3เว้น1=`3/1` · 2เว้น2=`2/2` · ทุกวัน=`1/0`. คำนวณจาก `anchorDate` (`src/lib/feedingCycle.ts`) เพราะ **cron เขียนแบบนี้ไม่ได้** (คาบไม่หารลงตัวกับเดือน)
+- **ตั้งใจแยกจาก `ReminderRule`**: ถ้าผูกกัน การกด "ทำเสร็จแล้ว" จะ recompute `nextRunAt` ด้วย `minAdvance` → วงรอบหลุด anchor. รอบนี้สร้าง `Task` ตรง ๆ (`ruleId=null`, `linkType:'FeedingRound'`) จึงได้เมลสรุป/หน้างาน/ปฏิทินครบเหมือนเดิม
+- **Task 2 ใบต่อรอบ:** `FEEDING` ที่ `dueAt` + `SCRAP_COLLECT` ที่ `dueAt + recordLeadHours` (ผู้ใช้เดินเก็บเศษแล้วค่อยไล่บันทึก) — ปิดอัตโนมัติเมื่อบันทึกครบ
+- **`RoundProgress`** = `{ id, systemId, planId, feedDate("YYYY-MM-DD"), dueAt, recordDueAt, status, startedAt, completedAt, total, recorded, remaining, boxes[], crabs[], stats }`
+  - `boxes[]` = `{ boxId, code, label, total, recorded, done }` → ใช้ทำ**ป้ายบนกล่อง** (หายเมื่อ `done`)
+  - `crabs[]` = `{ crabId, code, boxId, boxCode, cableTieColor, recorded, tags[], note, score, recordedAt, recordedByUserId, recordedByName }`
+  - `stats` = `{ elapsedSec, normalCount, lowCount, noneCount, avgScore, recordedCount, expectedCount }`
+- **คะแนนการกิน (`score`)**: กินปลาปกติ+กินหอยปกติ=100 · อย่างใดอย่างหนึ่ง=65 · กินน้อย=35 · ไม่กินเลย=0
+- **`POST /entries` ไม่ regress ของเดิม** — เขียน `Crab.feedingNote` (`tags.join(', ')`) + `Crab.lastFedAt` (= `round.dueAt` ไม่ใช่เวลาที่กดบันทึก) + `CrabHistory` โซน `FEEDING` (คีย์ `feedingNote`/`fedAt` เหมือนเดิม); **บันทึกซ้ำตัวเดิม = อัปเดตแถวประวัติเดิม ไม่สร้างซ้ำ**
+- **concurrency:** `@@unique([roundId,crabId])` → 2 คนกดปูตัวเดียวกันพร้อมกันได้แถวเดียว; ปิดรอบด้วย conditional update → `celebrated=true` เกิดขึ้น**ครั้งเดียว**เสมอ
+- **`total` นับสด** จากปูจริงในระบบ (`deletedAt=null`, status `FATTENING|READY`) ไม่ใช่ `expectedCount` ที่เก็บไว้ — ปูขาย/เพิ่มกลางรอบแล้วตัวเลขขยับได้ FE ห้าม cache
+- **`feeding-energy`** คืน `[{ crabId, boxId, avgScore, samples, lastScore, lastRecordedAt, series[] }]` — **ปูที่ไม่มีบันทึกในรอบนั้นจะไม่ถูกนับเป็น 0** (ลืมบันทึก ≠ อดอาหาร) ดู `samples` ประกอบ
+- **สิทธิ์:** GET = login แล้วพอ (ไม่ใช่เจ้าของ → **404** จาก `assertOwnership`) · เขียน = `requireSystemEdit` (**403**)
+
+### Realtime (WebSocket) — ซิงค์รอบให้อาหารระหว่างเครื่อง
+
+| | |
+|---|---|
+| URL | `ws(s)://<host><WS_PATH>` (ดีฟอลต์ `/ws`) — ดูสถานะจาก `GET /api/health` → `realtime:{enabled,path}` |
+| Auth | **subprotocol** `['jwt', <accessToken>]` (browser ตั้ง Authorization header ไม่ได้); fallback `?token=` สำหรับ debug |
+| client→server | `{t:'subscribe'\|'unsubscribe', systemId}` · `{t:'ping'}` |
+| server→client | `{t:'hello'\|'subscribed'\|'pong'\|'error'}` · **`{t:'feeding.opened'\|'feeding.progress'\|'feeding.completed', systemId, round}`** |
+
+- `round` ที่ push = **snapshot เต็ม ก้อนเดียวกับที่ REST คืน** → client ไม่ต้อง reconcile, หลุดไปกี่ข้อความก็ self-heal
+- ปิดด้วย **4401** = token ใช้ไม่ได้ → ให้ refresh แล้วต่อใหม่ 1 ครั้ง (ซ้ำอีก = ให้ logout); **4403** = origin ไม่ผ่าน (prod)
+- server ping ทุก `WS_HEARTBEAT_SEC` (30 วิ) — กัน nginx ของ Plesk ตัดสายที่เงียบ
+- **ถ้า Plesk/Passenger ไม่ proxy upgrade** → ต่อไม่ติด, FE ถอยไป polling `GET .../feeding-round/current` ทุก 5 วิ อัตโนมัติ (payload เหมือนกันเป๊ะ); ปิดสวิตช์ทั้งระบบด้วย `REALTIME_ENABLED=false`
+
+---
 
 ### Uploads — รูปภาพ (Cloudinary)
 | Method | Path | หมายเหตุ |
@@ -304,5 +352,5 @@
 ## Health
 | Method | Path | |
 |---|---|---|
-| GET | `/api/health` | liveness |
+| GET | `/api/health` | liveness → `{ status, service, time, realtime:{enabled, path} }` (FE ใช้ `realtime` ตัดสินใจว่าจะต่อ WebSocket ไหม) |
 | GET | `/api/health/db` | เช็คต่อ DB ได้ |

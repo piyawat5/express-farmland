@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import type { Role } from '@prisma/client';
+import { Prisma, type Role } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { env } from '../config/env';
 import { AppError, badRequest } from '../lib/http';
@@ -77,12 +77,15 @@ const publicUser = (u: {
   name: string | null;
   role: Role;
   avatarUrl?: string | null;
+  uiPrefs?: unknown;
 }) => ({
   id: u.id,
   email: u.email,
   name: u.name,
   role: u.role,
   avatarUrl: u.avatarUrl ?? null,
+  // ค่าตั้งค่า UI ต่อผู้ใช้ (โหมดสอน: tourDoneAt/tourSkipped) — Phase 22
+  uiPrefs: (u.uiPrefs as Record<string, unknown> | null) ?? null,
 });
 
 // ── register (email + password) ───────────────────────────────────────
@@ -150,4 +153,19 @@ export async function getMe(userId: number) {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new AppError(401, 'ไม่พบผู้ใช้');
   return publicUser(user);
+}
+
+/**
+ * อัปเดตค่าตั้งค่า UI ของผู้ใช้ (merge ทับของเดิม) — Phase 22 (โหมดสอน)
+ * เก็บว่า user คนไหนติ๊ก "ไม่ต้องแสดง tutorial อีก" ให้จำข้ามเครื่อง (localStorage อย่างเดียวไม่พอ)
+ */
+export async function updateUiPrefs(userId: number, patch: Record<string, unknown>) {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { uiPrefs: true } });
+  if (!user) throw new AppError(401, 'ไม่พบผู้ใช้');
+  const merged = { ...((user.uiPrefs as Record<string, unknown> | null) ?? {}), ...patch };
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { uiPrefs: merged as Prisma.InputJsonValue },
+  });
+  return publicUser(updated);
 }

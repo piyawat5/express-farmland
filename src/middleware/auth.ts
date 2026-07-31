@@ -101,6 +101,9 @@ export const systemIdFromWaterTest = systemIdByEntity((id) =>
 export const systemIdFromDosingCalibration = systemIdByEntity((id) =>
   prisma.dosingCalibration.findUnique({ where: { id }, select: { systemId: true } }),
 );
+export const systemIdFromFeedingRound = systemIdByEntity((id) =>
+  prisma.feedingRound.findUnique({ where: { id }, select: { systemId: true } }),
+);
 
 /**
  * dosing rule แก้ได้: rule ของระบบ → ต้องเป็นเจ้าของระบบ; rule กลาง (systemId=null) → ต้องเป็นเจ้าของกฎ
