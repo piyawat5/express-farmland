@@ -102,12 +102,17 @@ export function previewFeedDays(plan: CycleFields, from: Date, days = 14): { dat
 // ป้ายชุดเดียวกับที่หน้าเว็บใช้อยู่ (CrabsView.FEEDING_TAGS) — เก็บลง Crab.feedingNote เหมือนเดิม
 export const FEEDING_TAGS = ['ไม่กินปลา', 'ไม่กินหอย', 'กินปลาปกติ', 'กินหอยปกติ', 'กินน้อย'] as const;
 
-/** คะแนน 0–100: กินครบ 2 อย่าง=100 · อย่างใดอย่างหนึ่ง=65 · กินน้อย=35 · ไม่กินเลย=0 */
+/**
+ * คะแนน 0–100: กินครบทุกอย่างที่บันทึกในรอบนี้=100 (รอบให้อาหารชนิดเดียวก็เต็ม 100 ได้ ไม่ต้องมีทั้งปลา+หอย)
+ * · ให้ 2 ชนิดแต่ปฏิเสธไปอย่างนึง (มีแท็ก "ไม่กิน...")=65 · กินน้อย=35 · ปฏิเสธทั้งหมด/ไม่มีข้อมูล=0
+ */
 export function scoreFromTags(tags: string[]): number {
-  const fish = tags.includes('กินปลาปกติ');
-  const shell = tags.includes('กินหอยปกติ');
-  if (fish && shell) return 100;
-  if (fish || shell) return 65;
-  if (tags.includes('กินน้อย')) return 35;
+  const ateNormal = tags.includes('กินปลาปกติ') || tags.includes('กินหอยปกติ');
+  const refusedSome = tags.includes('ไม่กินปลา') || tags.includes('ไม่กินหอย');
+  const little = tags.includes('กินน้อย');
+
+  if (ateNormal && !refusedSome && !little) return 100;
+  if (ateNormal && refusedSome) return 65;
+  if (little) return 35;
   return 0;
 }

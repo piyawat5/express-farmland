@@ -362,7 +362,7 @@ model FeedingEntry {
   boxId            Int? // snapshot กล่องตอนบันทึก (ปูอาจย้ายกล่องภายหลัง)
   tags             Json // ป้ายการกินเดิม ["กินปลาปกติ","กินหอยปกติ",...]
   note             String?      @db.Text
-  score            Int // 0–100 (ปลา+หอยปกติ=100 / อย่างใดอย่างหนึ่ง=65 / กินน้อย=35 / ไม่กิน=0)
+  score            Int // 0–100 (กินครบทุกอย่างที่บันทึกในรอบนี้=100 / ให้ 2 ชนิดแต่ปฏิเสธไปอย่าง=65 / กินน้อย=35 / ไม่กิน=0)
   recordedBy       User?        @relation(fields: [recordedByUserId], references: [id], onDelete: SetNull)
   recordedByUserId Int?
   recordedAt       DateTime     @default(now())

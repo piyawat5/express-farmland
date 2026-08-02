@@ -4,6 +4,15 @@
 > อัปเดตทุกครั้งที่มี decision สำคัญ / สร้าง module ใหม่ / เปลี่ยน schema
 
 ## 👉 ทำต่อจากตรงนี้ (NEXT — session ใหม่อ่านตรงนี้ก่อน)
+### 🐞 แก้บั๊กฟีดแบ็ค 2 ข้อ: คะแนนกินอาหารชนิดเดียว + พลุฉลองไม่ขึ้นทุกจอ (2026-08-02) — BE tsc + FE build ผ่าน, ✅ backfill DB จริงแล้ว, ไม่ต้อง migrate
+- **ข้อ 1 (`scoreFromTags` เข้าใจผิดว่ารอบให้อาหาร 2 ชนิดเสมอ):** `lib/feedingCycle.ts` เดิมให้ 100 คะแนนต้องติ๊ก**ทั้ง** `กินปลาปกติ`+`กินหอยปกติ` — รอบที่ให้อาหารชนิดเดียว (ผู้ใช้ให้ทีละอย่างจริง ไม่เคยให้พร้อมกัน) ติ๊กแค่ 1 แท็กเลยได้ 65 (กินบางส่วน) ทั้งที่กินหมดแล้ว. แก้เป็นแยกแท็ก "ปฏิเสธชัดเจน" (`ไม่กินปลา`/`ไม่กินหอย`) ออกจาก "ไม่มีข้อมูล" (ไม่ติ๊กเลยเพราะไม่ได้ให้ชนิดนั้น) — มีแท็ก "กินปกติ" อย่างน้อย 1 + ไม่มีแท็กปฏิเสธเลย = 100; มีทั้งกินปกติ+ปฏิเสธ (ให้ 2 ชนิด กินแค่ 1) ยังคงเป็น 65 เหมือนเดิม (กินบางส่วนจริง)
+  - **backfill รอบเก่า** (ผู้ใช้ยืนยันต้องการ): สคริปต์ one-off คำนวณ `FeedingEntry.score` ใหม่จาก `tags` ที่บันทึกไว้ + sync `FeedingRound.avgScore`/`normalCount` ของรอบ `COMPLETED` — รันแล้ว **แก้ไป 98/117 entries + 3/3 rounds** ลง DB จริง (ลบสคริปต์ทิ้งหลังรันเสร็จ ไม่ commit)
+- **ข้อ 2 (พลุฉลองขึ้นแค่จอคนปิดรอบคนสุดท้าย ทั้งที่ตัวนับ HUD อัปเดตทุกจอ):** ตรวจ backend (`feeding.service.ts` `evaluateAndMaybeComplete`/`refreshAndPublish`) แล้วว่า broadcast `feeding.completed` ไปหาทุก socket ในห้องถูกต้องอยู่แล้ว — บั๊กอยู่ FE ล้วน (`CrabsView.vue`) 2 จุดอิสระกัน:
+  - **(2a)** guard กันฉลองซ้ำใช้ `localStorage` (share กันทุกแท็บ/หน้าต่างของเบราว์เซอร์เดียวกัน) → แท็บที่ได้ event ทีหลังโดนบล็อกทั้งที่เป็นคนละจอจริง. แก้เป็น `sessionStorage` (private ต่อแท็บ แต่ยังอยู่รอด reload หน้าเหมือนเดิม)
+  - **(2b)** จอที่ตกไปโหมด polling (WS หลุด/ต่อไม่ติด) ไม่มีทางรู้ว่ารอบปิดแล้ว เพราะ `getCurrentRound()` query แค่ `status:'OPEN'` — พอรอบ COMPLETED endpoint คืน `null` ทันที, `applyRound(null)` แค่เคลียร์ HUD ไม่มีโอกาสเห็นรอบจบเลย. แก้ `loadFeeding()`: ถ้า `current` คืน `round:null` แต่ก่อนหน้านี้ยังถือรอบ `OPEN` อยู่ → ดึงรอบเดิมซ้ำผ่าน `feedingApi.get(roundId)` (เพิ่ม endpoint ใหม่ในหน้า service ผูกกับ route `GET /feeding-rounds/:id` ที่มีอยู่แล้วแต่ FE ไม่เคยเรียก) เอาสถานะ COMPLETED สุดท้ายมาก่อนเคลียร์ กันพลาดพลุ
+- ไม่ต้อง migrate ทั้ง 2 ข้อ (แก้ pure function + FE logic เท่านั้น); แก้ comment ไม่ตรง `schema.prisma` `FeedingEntry.score` ให้ตรง logic ใหม่ด้วย (ไม่กระทบ migration)
+- ⚠️ ยังไม่ทดสอบ browser จริง (tsc/build ผ่าน) — รอผู้ใช้เทสให้อาหารชนิดเดียวจนจบรอบ + เทส 2 จอ/แท็บปิดรอบพร้อมกันดูว่าเห็นพลุทั้งคู่
+
 ### 🍤 แผนให้อาหาร + รอบบันทึกการกิน (realtime) + โหมดสอน + ธีม + รายงานมือถือ (2026-07-31) — BE tsc + FE build ผ่าน, ✅ migration apply แล้ว, ✅ smoke test BE ผ่านหมด
 แผน: `C:\Users\piyawat\.claude\plans\1-theme-sharded-quiche.md`
 - **migration ใหม่ 2 ตัว ✅ apply ลง DB จริงแล้ว** (รวมเป็น 17 migrations): `phase21_feeding_rounds` (3 ตารางใหม่ `FeedingPlan`/`FeedingRound`/`FeedingEntry` + enum `FeedingRoundStatus` — **ไม่ ALTER ตารางเดิมเลย**) และ `phase22_user_ui_prefs` (`User.uiPrefs Json?`)
@@ -402,6 +411,7 @@ prisma/schema.prisma
 > ค่าตัวเลขจริง (min/max, ปริมาณสาร, รอบวัน) ให้ถามผู้ใช้ตอนทำ seed เพราะผู้ใช้ custom เอง
 
 ## Log การเปลี่ยนแปลง
+- **2026-08-02** — **แก้บั๊กฟีดแบ็ค 2 ข้อจากฟีเจอร์ให้อาหาร (Phase 21)** — BE tsc + FE build ผ่าน, ✅ backfill DB จริงแล้ว, ไม่ต้อง migrate: (1) `scoreFromTags` (`lib/feedingCycle.ts`) เคยบังคับต้องกินทั้งปลา+หอยถึงจะได้ 100 → แก้ให้รอบที่ให้อาหารชนิดเดียวได้ 100 เต็มถ้ากินหมด (แยกแท็ก "ปฏิเสธ" ออกจาก "ไม่มีข้อมูล") + backfill รอบเก่า (98/117 entries, 3/3 rounds); (2) พลุฉลองไม่ขึ้นทุกจอ (ทั้งที่ HUD อัปเดตทุกจอ) — root cause เป็น FE ล้วน 2 จุด: guard กันฉลองซ้ำใช้ `localStorage` (ข้ามได้ทุกแท็บของเบราว์เซอร์เดียวกัน → เปลี่ยนเป็น `sessionStorage`) + จอที่ตกไปโหมด polling ไม่รู้ว่ารอบปิดแล้วเพราะ `getCurrentRound()` กรองแค่ `status:'OPEN'` (→ เพิ่ม `feedingApi.get(roundId)` ดึงรอบเดิมซ้ำก่อนเคลียร์). ดูรายละเอียดเต็มในหัวข้อ NEXT ด้านบน
 - **2026-07-31** — **แผนให้อาหาร + รอบบันทึกการกิน (WebSocket) + โหมดสอน + ธีม + รายงานมือถือ** (แผน `1-theme-sharded-quiche.md`) — BE tsc + FE build ผ่าน, ✅ migration apply แล้ว, ✅ smoke test BE ผ่านหมด:
   - **migration `phase21_feeding_rounds`** (3 ตารางใหม่ ไม่ ALTER ของเดิม) + **`phase22_user_ui_prefs`** (`User.uiPrefs Json?`) — apply ลง DB จริงแล้วทั้งคู่ (17 migrations)
   - **dep ใหม่ (BE):** `ws` + `@types/ws` (⚠️ `ws` ต้องอยู่ใน `dependencies` — Plesk ติดตั้งแบบ production); **env ใหม่:** `REALTIME_ENABLED`/`WS_PATH`/`WS_HEARTBEAT_SEC`
