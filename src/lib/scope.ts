@@ -53,3 +53,50 @@ export function assertOwnership(user: AuthUser, ownerId: number | null | undefin
   if (isAdmin(user)) return;
   if (ownerId !== user.id) throw notFound('ไม่พบข้อมูลนี้');
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  หมู่บ้านฟาร์ม (Phase 23) — สิทธิ์ "เข้าไปเดินชม" ซึ่งกว้างกว่าสิทธิ์เจ้าของ
+//
+//  ⚠️ นี่เป็นการอ่านข้ามผู้ใช้ครั้งแรกของแอป — ทุก list ที่มีอยู่กรองด้วย
+//     ownerWhere/systemScopeWhere ทั้งหมด อย่าเอา 2 อย่างนี้ไปปนกัน
+//     (สิทธิ์ "เดินชม" ไม่ได้แปลว่าแก้ไขได้ — การแก้ยังต้องผ่าน assertCanEditSystem เหมือนเดิม)
+// ════════════════════════════════════════════════════════════════════
+
+/** เข้าชมฟาร์ม (ระบบปู) นี้ได้ไหม — 1 query ใช้เป็นด่านของทั้ง REST และ WebSocket village.enter */
+export async function canViewFarm(user: AuthUser, systemId: number): Promise<boolean> {
+  if (isAdmin(user)) return true;
+  const sys = await prisma.crabSystem.findUnique({
+    where: { id: systemId },
+    select: { ownerId: true, villageOpen: true },
+  });
+  // ownerId เป็น nullable — ระบบเก่า/seed ที่ไม่มีเจ้าของถือว่าไม่มีหมู่บ้าน (ไม่งั้นได้ฟาร์มที่ไล่ใครออกไม่ได้)
+  if (!sys || sys.ownerId == null) return false;
+  if (sys.ownerId === user.id) return true;
+  if (sys.villageOpen) return true;
+  const grant = await prisma.farmAccess.findUnique({
+    where: { ownerId_visitorId: { ownerId: sys.ownerId, visitorId: user.id } },
+    select: { status: true, revokedAt: true },
+  });
+  return grant?.status === 'APPROVED' && grant.revokedAt == null;
+}
+
+/** systemId ทั้งหมดที่ user "เดินเข้าชมได้" = ของตัวเอง + ที่ได้รับอนุญาต + ที่เปิดให้ทุกคน
+ *  ADMIN → null = ไม่จำกัด (คอนเวนชันเดียวกับ ownedSystemIds) */
+export async function visitableSystemIds(user: AuthUser): Promise<number[] | null> {
+  if (isAdmin(user)) return null;
+  const grants = await prisma.farmAccess.findMany({
+    where: { visitorId: user.id, status: 'APPROVED', revokedAt: null },
+    select: { ownerId: true },
+  });
+  const rows = await prisma.crabSystem.findMany({
+    where: {
+      OR: [
+        { ownerId: user.id },
+        { villageOpen: true, ownerId: { not: null } },
+        ...(grants.length ? [{ ownerId: { in: grants.map((g) => g.ownerId) } }] : []),
+      ],
+    },
+    select: { id: true },
+  });
+  return rows.map((r) => r.id);
+}

@@ -1,6 +1,7 @@
 import type { Request } from 'express';
 import { prisma } from '../lib/prisma';
 import { AppError, asyncHandler, notFound } from '../lib/http';
+import { canViewFarm } from '../lib/scope';
 import { verifyAccessToken, type AuthUser } from '../services/auth.service';
 
 // ════════════════════════════════════════════════════════════════════
@@ -50,7 +51,28 @@ export async function assertCanEditSystem(user: AuthUser, systemId: number): Pro
   if (system.ownerId !== user.id) throw new AppError(403, 'แก้ไขได้เฉพาะระบบปูของตัวเอง');
 }
 
+/**
+ * หมู่บ้านฟาร์ม (Phase 23) — assert สิทธิ์ "เข้าไปเดินชม" (กว้างกว่าสิทธิ์แก้ไข)
+ * ⚠️ โยน 404 ไม่ใช่ 403 โดยตั้งใจ (ตาม assertOwnership) — ถ้าเป็น 403 endpoint นี้
+ *    จะกลายเป็นเครื่องมือไล่เดาว่า systemId ไหนมีอยู่จริงในฐานข้อมูล
+ */
+export async function assertCanViewFarm(user: AuthUser, systemId: number): Promise<void> {
+  if (!(await canViewFarm(user, systemId))) {
+    throw notFound('ไม่พบฟาร์มนี้ หรือยังไม่ได้รับอนุญาตให้เข้าชม');
+  }
+}
+
 type SystemIdResolver = (req: Request) => number | null | Promise<number | null>;
+
+/** middleware คู่กับ requireSystemEdit แต่เป็นระดับ "อ่าน/เดินชม" */
+export const requireFarmView = (getSystemId: SystemIdResolver) =>
+  asyncHandler(async (req, _res, next) => {
+    if (!req.user) throw new AppError(401, 'ต้องเข้าสู่ระบบก่อน');
+    const systemId = await getSystemId(req);
+    if (systemId == null) throw notFound('ไม่พบฟาร์มที่เกี่ยวข้อง');
+    await assertCanViewFarm(req.user, systemId);
+    next();
+  });
 
 /** middleware กันการแก้ระบบของคนอื่น — resolve systemId จาก request แล้วเช็คสิทธิ์ */
 export const requireSystemEdit = (getSystemId: SystemIdResolver) =>

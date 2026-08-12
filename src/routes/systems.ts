@@ -75,6 +75,8 @@ const systemBody = z.object({
   weatherPlace: z.string().max(120).nullable().optional(),
   // หน้าร้าน public (ข้อ 5) — publicSlug จัดการเองในบริการตอนเปิดร้าน
   publicEnabled: z.boolean().optional(),
+  // หมู่บ้านฟาร์ม (Phase 23) — เปิดให้ผู้ใช้ที่ล็อกอินทุกคนเข้าชมโดยไม่ต้องอนุมัติทีละคน
+  villageOpen: z.boolean().optional(),
   note: z.string().optional(),
 });
 

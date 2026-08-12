@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma';
 import { notFound } from '../lib/http';
 import type { AuthUser } from './auth.service';
 import { ownerWhere, assertOwnership } from '../lib/scope';
+import { evictUnauthorizedVisitors } from '../lib/realtime';
 
 // ── โมดูล A: CrabSystem = ระบบน้ำ RAS 1 ชุด ───────────────────────────
 
@@ -74,7 +75,11 @@ export async function updateSystem(id: number, data: Prisma.CrabSystemUncheckedU
   if (patch.publicEnabled === true && !current.publicSlug) {
     (patch as { publicSlug?: string }).publicSlug = await generateUniqueSlug();
   }
-  return prisma.crabSystem.update({ where: { id }, data: patch });
+  const updated = await prisma.crabSystem.update({ where: { id }, data: patch });
+  // ปิดสวิตช์ "เปิดฟาร์มให้ทุกคน" → เตะคนที่เข้ามาได้เพราะสวิตช์นี้ออกทันที (Phase 23)
+  // คนที่ได้รับอนุมัติรายคนยังอยู่ต่อได้ (evict เช็คสิทธิ์ใหม่ทีละคน)
+  if (patch.villageOpen === false && current.villageOpen) evictUnauthorizedVisitors(id);
+  return updated;
 }
 
 export async function deleteSystem(id: number) {

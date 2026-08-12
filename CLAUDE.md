@@ -4,6 +4,50 @@
 > อัปเดตทุกครั้งที่มี decision สำคัญ / สร้าง module ใหม่ / เปลี่ยน schema
 
 ## 👉 ทำต่อจากตรงนี้ (NEXT — session ใหม่อ่านตรงนี้ก่อน)
+### 🏡 หมู่บ้านฟาร์ม + ลดคลิกบันทึกการกิน + แก้ทัวร์ไม่เด้ง (2026-08-12) — BE tsc + FE build ผ่าน, ✅ migration apply แล้ว, ✅ สโมคเทส REST 12 ข้อ + WS 12 ข้อผ่านหมด
+แผน: `C:\Users\piyawat\.claude\plans\1-1-1-velvety-treasure.md`
+
+**⚠️ ยังไม่ทดสอบบนเบราว์เซอร์จริง** — รอผู้ใช้เทส: เดินในฟาร์ม (คีย์บอร์ด+D-pad มือถือ), แต่งตัวละคร, วางของตกแต่ง, ขอ/อนุมัติเข้าชม 2 เครื่อง, เห็นกันเดินสด ๆ, ฝาก/ตอบจดหมาย
+
+- **ข้อ 3 (บั๊กทัวร์ไม่เด้งหลัง OAuth) — root cause เจอแล้ว:** `stores/auth.ts:14` เขียน `computed(() => !!tokenStore.access && !!user.value)` — `tokenStore.access` อ่าน localStorage (**ไม่ reactive**) ตอนบูตหลัง OAuth ยังเป็น null → `&&` short-circuit → **`user.value` ไม่เคยถูกอ่าน → computed ไม่มี dependency เลย → cache `false` ถาวร** → watcher ใน `App.vue:66` ไม่ยิงซ้ำ. **ไม่ใช่แค่ทัวร์ที่พัง** — `startRealtime()`/`taskStore.refresh()`/`refreshIncome()` ก็ไม่ถูกเรียกด้วย (DashboardView เรียก `systemStore.load()` เองเลยบังอาการไว้). **แก้ = สลับลำดับให้อ่าน `user.value` ก่อน** (บรรทัดเดียว); เกิดกับ login email/password เหมือนกัน ไม่ใช่เฉพาะ OAuth
+  - เสริม: `finishTour()` กดข้ามแล้ว**จำเสมอ** (เดิมไม่ติ๊ก checkbox = ไม่จำอะไรเลย → เด้งซ้ำทุก session) + เอา checkbox ที่ซ้ำซ้อนออกจาก `TourOverlay`; `hasSeenTour()` **เทียบ `tourVersion` แล้ว** (เดิมเขียนลง prefs แต่ไม่เคยเทียบ) + `watch` ใน TourOverlay เป็น `immediate`
+- **ข้อ 2 (ลดคลิกบันทึกการกิน 3→2):** ตัดปุ่มเขียว "บันทึกการกินรอบนี้" ออก → `saveAll()` ใน `CrabsView.vue` ยิง `feedingApi.record()` ให้ทุกแท็บที่เลือกป้ายไว้ **ไม่แตะ backend เลย** (คะแนน/ตัวนับ/พลุ/หลอดพลังเหมือนเดิมเป๊ะ)
+  - ⚠️ **ลำดับสำคัญ: record ก่อน → crabApi.update ทีหลังเสมอ** เพราะ `recordEntry` เขียน `Crab.feedingNote` + CrabHistory FEEDING ให้อยู่แล้ว พอ sync `f.feedingNote` ให้ตรงแล้วค่อย PATCH → diff เห็นว่าไม่เปลี่ยน จึง**ไม่เกิดแถวประวัติซ้ำ** (สลับลำดับ = โน้ตเก่าทับของใหม่)
+  - ปูใหม่ระหว่างรอบเปิด: create ก่อนเอา id แล้วค่อย record (เดิมบันทึกการกินไม่ได้เพราะยังไม่มี id)
+- **ข้อ 1 หมู่บ้านฟาร์ม (ฟีเจอร์ใหม่ทั้งก้อน) — migration `phase23_farm_village` ✅ apply ลง DB จริงแล้ว** (รวม 18 migrations):
+  - **schema:** `CrabSystem.villageOpen Boolean @default(false)` + `User.farmAvatar Json?` + 3 model ใหม่ `FarmAccess`(+enum `FarmAccessStatus`)/`FarmDecor`/`FarmLetter`
+  - ⚠️ **`villageOpen` ห้ามใช้ `publicEnabled` ซ้ำ** — `publicEnabled` คือหน้าร้าน QR ของลูกค้าที่**ไม่ได้ล็อกอิน** ถ้าใช้ร่วมกันจะกลายเป็น "เปิดร้าน = เปิดฟาร์มให้ทุกคน" และ "ปิดร้าน = เตะเพื่อนออก"
+  - **สิทธิ์:** `lib/scope.ts` +`canViewFarm`/`visitableSystemIds`; `middleware/auth.ts` +`assertCanViewFarm`(**โยน 404 ไม่ใช่ 403** — 403 ทำให้ endpoint กลายเป็นเครื่องมือไล่เดา systemId)/`requireFarmView`
+  - **BE ใหม่:** `services/village.service.ts` + `routes/village.ts` (mount `/api/village`) — ดูตารางครบใน [API.md](./API.md) หมวด H
+  - ⚠️ **`GET /village/users` เป็นการอ่านข้ามผู้ใช้ครั้งแรกของแอป** (ทุก list เดิมกรองด้วย `ownerWhere`/`systemScopeWhere` หมด) — ใช้ `PUBLIC_USER_SELECT` เท่านั้น ห้าม `include` ทั้งแถว (passwordHash/uiPrefs/lineId จะรั่ว); `email` ให้เฉพาะ ADMIN
+  - **`PUT .../decor` แทนที่ผังทั้งชุด** (ไม่ใช่ CRUD รายชิ้น) → ตัด logic reconcile optimistic update ทิ้งทั้งหมด; UI เป็นลากวางแล้วกดบันทึกทีเดียว
+  - **แจ้งเตือน = derive ไม่มี model ใหม่:** `GET /village/inbox` นับจาก `FarmAccess.status='PENDING'` + `FarmLetter.readAt IS NULL` แล้ว push ผ่าน WS (model `Notification` เดิมผูกกับ `Task` + เป็นอีเมล ใช้ไม่ได้)
+  - **WebSocket:** `ws.farmRooms` **แยกจาก `ws.rooms` เด็ดขาด** (rooms ส่ง `feeding.*` ที่มีรหัสปู/โน้ต/คะแนน — แขกต้องไม่ได้รับ); เช็คสิทธิ์ **ครั้งเดียวตอน `village.enter`** หลังจากนั้น `village.move` (10 Hz) เช็คแค่ `Set.has` ไม่มี query; refactor `publish()` → `broadcast(payload, inRoom, except)` + `publishFarm`(ไม่ echo กลับคนส่ง)/`publishToUser`(ป๊อปอัพ global)/`revokeFarmAccess`/`evictUnauthorizedVisitors`/`farmPresence`
+    - `village.move` **ข้าม `serialize()`** สร้าง JSON string ตรง ๆ (เป็น path เดียวในระบบที่วิ่ง 10 ครั้ง/วิ/คน) + server ทิ้งเงียบถ้ามาถี่กว่า 80ms + clamp พิกัด
+    - **ไม่มีตารางเก็บตำแหน่ง avatar** (อยู่ใน memory ล้วน) และ**ไม่มี presence registry** (scan `wss.clients` → cleanup ตอน disconnect ฟรี)
+  - **FE ใหม่:** `stores/village.ts`, `lib/village/{avatarParts,catalog,world,walk}.ts`, `components/village/{FarmAvatar,AvatarEditor,FarmCanvas,DPad,DecorPalette,LetterDialog,VisitRequestPopup}.vue`, `views/{FarmVillageView,FarmSpaceView,MyFarmView}.vue`; เมนูกลุ่มใหม่ `village` ("หมู่บ้านฟาร์ม") ใน `NAV_GROUPS` + `hiddenRoutes` ใน router (route ที่มี param **ห้ามอยู่ใน `navRoutes`** ไม่งั้นเมนูขึ้นรายการที่คลิกแล้วพัง)
+  - **เลือก DOM+SVG ไม่ใช่ `<canvas>`** — เหตุผลตัดสิน: `TourOverlay` วัดตำแหน่งด้วย `querySelector`+`getBoundingClientRect` ถ้าเป็น canvas จะใส่หมู่บ้านเข้าโหมดสอนไม่ได้เลย (+ ThemeDecor ใช้ไอดิออมนี้อยู่แล้ว, ~110 node เท่านั้น)
+  - **ตกแต่ง 40 ชิ้น 5 หมวด** (`catalog.ts`) — `kind` เป็น String ไม่ใช่ enum → เพิ่มของใหม่ได้โดยไม่ต้อง migrate (precedent `CrabHistory.zone`)
+  - **ทัวร์เพิ่ม 3 ขั้น** (village-my-farm / village-visit / village-letter) + `TOUR_VERSION = 2` → ทัวร์ 13 ขั้นจะเด้งใหม่ 1 ครั้งกับทุกคน (กดข้ามได้)
+  - ⚠️ **anchor `data-tour` ต้องอยู่บน toolbar เท่านั้น ห้ามอยู่ในโลกที่ถูก transform** — `getBoundingClientRect` จะเพี้ยนทันทีที่กล้องเลื่อน
+  - ⚠️ **`touch-action: none` ใส่เฉพาะปุ่ม D-pad** ห้ามใส่คอนเทนเนอร์โลก (มือถือจะเลื่อนหน้าไม่ได้) + จับ `pointercancel`/`pointerleave` ไม่งั้นนิ้วไถลออกจากปุ่มแล้วเดินไม่หยุด
+  - ⚠️ **`stopRealtime()` ล้าง `handlers = []`** → `VisitRequestPopup` ต้องลงทะเบียน `onRealtime` ใน `watch(isAuthenticated)` **ไม่ใช่ `onMounted`** ไม่งั้น logout→login แล้วหูหนวกเงียบ ๆ
+  - ⏭️ **ถ้า WS ใช้ไม่ได้บน Plesk** → หน้าฟาร์มยังเดินได้คนเดียว + ขึ้นชิป "ออฟไลน์ — คนอื่นมองไม่เห็นคุณ" และป๊อปอัพขอเข้าชมถอยไป poll ทุก 20 วิ (**ไม่มี REST endpoint เขียนตำแหน่ง** โดยตั้งใจ)
+
+### 🔥 แก้เครื่องร้อนตอนบันทึกการกิน (backdrop-filter) (2026-08-02) — FE-only (farmland-web), `vue-tsc`+`vite build` ผ่าน, ไม่ต้อง migrate
+- **ผู้ใช้รายงาน:** มือถือร้อนจี๋ตอนบันทึกการกินในหน้ากล่องปูช่วงมีรอบให้อาหารเปิดอยู่ — ตรวจแล้วไม่เกี่ยวกับ WebSocket/polling (`lib/realtime.ts` ปกติดี, backoff/interval สมเหตุสมผล) หรือแอนิเมชันปูขยับ/auto-scroll (transform-only, GPU-friendly) — **root cause = CSS `backdrop-filter: blur()`** (หนึ่งใน property ที่หนัก GPU มือถือสุด เพราะต้อง re-blur ทุกอย่างข้างหลังทุกเฟรม) ที่ทำงาน**ทุกครั้ง**ที่กดบันทึก ไม่ใช่แค่ตอนจบรอบ:
+  - `FeedingQuestHud.vue` (HUD เลขเควสลอยกลางจอ) — โชว์ทุกครั้งที่บันทึก 1 ตัว นาน 2.5 วิ ซ้อนทับ dialog ปูที่มีแอนิเมชันข้างหลัง → เอา `backdrop-filter: blur(3px)` ออก (พื้นหลัง `rgba(20,24,32,0.86)` ทึบพอให้อ่านชัดอยู่แล้ว)
+  - `FeedingCelebration.vue` (พลุฉลองจบรอบ) — สปาร์ค 70 ชิ้น `animation: infinite` **ไม่มี auto-dismiss** (ปิดได้ทางเดียวคือกดปุ่ม) → ถ้าผู้ใช้วางมือถือทันทีหลังบันทึกตัวสุดท้าย พลุ+blur ค้างไม่จำกัดเวลา (ตัวที่น่าจะร้อนที่สุด) → เอา `backdrop-filter: blur(2px)` ออก + เพิ่ม auto-dismiss timer 15 วิ (`watch(modelValue)` ตั้ง `setTimeout(close, 15000)`, mirror pattern `hideTimer` ของ QuestHud)
+  - ไม่แตะแอนิเมชันอื่น (crab scuttle/legwiggle/clawwave, ThemeDecor, quest-pop, cb-firework keyframes) — ตรวจแล้วไม่ใช่ตัวปัญหา คงเอฟเฟกต์ภาพไว้เหมือนเดิม
+- ⚠️ ยังไม่ทดสอบมือถือจริง (`vue-tsc`+`vite build` ผ่าน) — รอผู้ใช้เทสบันทึกรัว ๆ หลายตัว + บันทึกตัวสุดท้ายจบรอบแล้ววางมือถือทิ้งไว้ดูว่าพลุหยุดเองใน ~15 วิ + เครื่องไม่ร้อนเท่าเดิม
+
+### 🎨 scroll อัตโนมัติไปโซนการกิน + ไอคอนขวดสารสีตามพารามิเตอร์น้ำ (2026-08-02) — FE-only (farmland-web), `vue-tsc`+`vite build` ผ่าน, ไม่ต้อง migrate
+- **ข้อ 1 (auto-scroll โซน "การกิน" ตอนเปิด popup กล่องปู):** `CrabsView.vue` เดิมต้อง scroll หาโซนการกินเองทุกครั้งที่กดกล่อง (โซนอยู่ค่อนไปทางล่างของ popup) — เพิ่ม `feedZoneEls` (ref array ต่อแท็บ, ผูกกับ `<div class="zone-head">` ของโซนการกินผ่าน function ref `:ref="(el) => (feedZoneEls[i] = el)"`) + `scrollToFeedZone()` เรียก `scrollIntoView({behavior:'smooth', block:'start'})`; ทำงาน**เฉพาะตอนมีรอบให้อาหารเปิดอยู่** (`roundOpen`, ข้อมูลจาก Phase 21) — เรียกท้าย `openBox()` และใน `watch(activeTab, ...)` (สลับแท็บปูในกล่องเดียวกันก็เลื่อนตามให้ใหม่); ใช้ `nextTick()` + `setTimeout(300)` กัน dialog transition mount ช้ากว่า (mirror pattern `withScrollPreserved`)
+- **ข้อ 2 (ไอคอนขวดสารเคมี SVG วาดเอง แทน mdi ทั่วไป):** ไฟล์ใหม่ `src/plugins/waterBottleIcons.ts` — วาดทรงขวดรีเอเจนต์ (ฝาเข้ม+คอคอด+ตัวขวด+แถบฉลากคาด) เป็น custom Vuetify icon set (`sets: { mdi, water: waterIconSet }` ใน `plugins/vuetify.ts`, เรียกผ่าน `waterParamIcon(param: WaterParam)` → string `water:<key>` ใช้กับ prop `icon`/`prepend-inner-icon` ได้เหมือน mdi ปกติทุกที่); สีตามที่ผู้ใช้กำหนด (แนบรูปขวดจริงอ้างอิงทรง): **Mg/Ca=ม่วง, แอมโมเนีย=เขียว, pH=น้ำเงิน, อัลคาไลน์=เทา, ไนไตรท์=แดง, โพแทสเซียม=ขาว** (เพิ่ม stroke เทาอ่อนกันหายกับพื้นการ์ดขาว) — Salinity ไม่ได้ระบุ เลือกฟ้าอมเขียวเอง
+  - ปรับทุกจุดที่อ้างอิงพารามิเตอร์น้ำใน FE: `WaterView.vue` (ช่องกรอกค่า + ตารางค่าเป้าหมาย + ตารางประวัติ + หัว dialog ตั้งเป้า), `CrabsView.vue` (แถบชิปค่าน้ำล่าสุด), `DosingView.vue` (ตาราง calibration/rules + dropdown เลือกพารามิเตอร์)
+  - พรีวิวไอคอนทั้ง 8 ตัวก่อนใช้งานจริง: artifact `water-bottle-icons-preview.html` (ให้ผู้ใช้ดูก่อนคอนเฟิร์ม)
+- ⚠️ ยังไม่ทดสอบ browser จริง (`vue-tsc`+`vite build` ผ่าน) — รอผู้ใช้เทสเปิดกล่องปูช่วงมีรอบให้อาหารดู scroll อัตโนมัติ + ดูหน้า "น้ำ & ปรุงน้ำ"/"คลังสาร"/หน้าปูว่าไอคอนขวดสีถูกใจไหม
+
 ### 🐞 แก้บั๊กฟีดแบ็ค 2 ข้อ: คะแนนกินอาหารชนิดเดียว + พลุฉลองไม่ขึ้นทุกจอ (2026-08-02) — BE tsc + FE build ผ่าน, ✅ backfill DB จริงแล้ว, ไม่ต้อง migrate
 - **ข้อ 1 (`scoreFromTags` เข้าใจผิดว่ารอบให้อาหาร 2 ชนิดเสมอ):** `lib/feedingCycle.ts` เดิมให้ 100 คะแนนต้องติ๊ก**ทั้ง** `กินปลาปกติ`+`กินหอยปกติ` — รอบที่ให้อาหารชนิดเดียว (ผู้ใช้ให้ทีละอย่างจริง ไม่เคยให้พร้อมกัน) ติ๊กแค่ 1 แท็กเลยได้ 65 (กินบางส่วน) ทั้งที่กินหมดแล้ว. แก้เป็นแยกแท็ก "ปฏิเสธชัดเจน" (`ไม่กินปลา`/`ไม่กินหอย`) ออกจาก "ไม่มีข้อมูล" (ไม่ติ๊กเลยเพราะไม่ได้ให้ชนิดนั้น) — มีแท็ก "กินปกติ" อย่างน้อย 1 + ไม่มีแท็กปฏิเสธเลย = 100; มีทั้งกินปกติ+ปฏิเสธ (ให้ 2 ชนิด กินแค่ 1) ยังคงเป็น 65 เหมือนเดิม (กินบางส่วนจริง)
   - **backfill รอบเก่า** (ผู้ใช้ยืนยันต้องการ): สคริปต์ one-off คำนวณ `FeedingEntry.score` ใหม่จาก `tags` ที่บันทึกไว้ + sync `FeedingRound.avgScore`/`normalCount` ของรอบ `COMPLETED` — รันแล้ว **แก้ไป 98/117 entries + 3/3 rounds** ลง DB จริง (ลบสคริปต์ทิ้งหลังรันเสร็จ ไม่ commit)
@@ -352,6 +396,7 @@
 - **E. คู่ค้า:** `Contact`, `Transaction` (มี status QUOTE = คำนวณกำไรล่วงหน้า), `OutreachLog`
 - **F. การเงิน:** `LedgerEntry` (สมุดบัญชีรวม income/expense)
 - **G. คลัง:** `InventoryItem`
+- **H. หมู่บ้านฟาร์ม:** `FarmAccess` (สิทธิ์เยี่ยมชมคนต่อคน, อนุมัติแล้วถาวรจนกว่าจะ `revokedAt`), `FarmDecor` (ของตกแต่ง พิกัดเป็นช่องตาราง), `FarmLetter` (จดหมายปักตามจุด + คำตอบเจ้าของ) — ตำแหน่ง avatar **ไม่เก็บลง DB** (อยู่ใน memory ของ `lib/realtime.ts`)
 
 ### หลักการออกแบบที่ตั้งใจไว้
 - `Substance` เป็น master list เดียว (เพิ่มสารใหม่ได้โดยไม่แก้โค้ด) — รองรับข้อ 2.1-2.3
@@ -391,6 +436,7 @@ prisma/schema.prisma
 - [x] **Phase 7** — seed ข้อมูลจริง: โครงสร้างครบตั้งแต่ Phase 2–5; ผู้ใช้เลือกไม่ seed ข้อมูลปลอม (กรอกผ่าน API) ✅
 - [x] **Phase 21** — โมดูล B2: `FeedingPlan`/`FeedingRound`/`FeedingEntry` (วงรอบ N วันเว้น M วัน) + WebSocket realtime ✅
 - [x] **Phase 22** — `User.uiPrefs` (จำสถานะโหมดสอนต่อผู้ใช้) ✅
+- [x] **Phase 23** — โมดูล H หมู่บ้านฟาร์ม: `FarmAccess`/`FarmDecor`/`FarmLetter` + `CrabSystem.villageOpen` + `User.farmAvatar` + WS co-presence (เดินเยี่ยมฟาร์มคนอื่นด้วย avatar, ตกแต่งฟาร์ม, ฝากจดหมาย) ✅
 
 ## Seed data (ทำพร้อม Phase 2) — `prisma/seed.ts`
 ข้อมูลจริงของผู้ใช้ที่ต้อง seed:
@@ -411,6 +457,14 @@ prisma/schema.prisma
 > ค่าตัวเลขจริง (min/max, ปริมาณสาร, รอบวัน) ให้ถามผู้ใช้ตอนทำ seed เพราะผู้ใช้ custom เอง
 
 ## Log การเปลี่ยนแปลง
+- **2026-08-12** — **หมู่บ้านฟาร์ม (Phase 23) + ลดคลิกบันทึกการกิน + แก้ทัวร์ไม่เด้งหลัง OAuth** (แผน `1-1-1-velvety-treasure.md`) — BE tsc + FE build ผ่าน, ✅ migration apply แล้ว, ✅ สโมคเทส REST 12 ข้อ + WS 12 ข้อผ่านหมด (ลบ user/ระบบทดสอบทิ้งแล้ว):
+  - **migration `phase23_farm_village`** (18 migrations): 3 ตารางใหม่ `FarmAccess`/`FarmDecor`/`FarmLetter` + enum `FarmAccessStatus` + `CrabSystem.villageOpen` + `User.farmAvatar` — **ไม่ ALTER อะไรที่ทำข้อมูลเดิมเสียหาย**
+  - ไฟล์ใหม่ BE: `services/village.service.ts`, `routes/village.ts`; แก้ `lib/scope.ts` (+`canViewFarm`/`visitableSystemIds`), `middleware/auth.ts` (+`assertCanViewFarm`/`requireFarmView`), `lib/realtime.ts` (ห้อง `farmRooms` + `publishFarm`/`publishToUser`/`revokeFarmAccess`/`farmPresence`/`evictUnauthorizedVisitors`)
+  - ไฟล์ใหม่ FE: `stores/village.ts`, `lib/village/{avatarParts,catalog,world,walk}.ts`, `components/village/{FarmAvatar,AvatarEditor,FarmCanvas,DPad,DecorPalette,LetterDialog,VisitRequestPopup}.vue`, `views/{FarmVillageView,FarmSpaceView,MyFarmView}.vue`
+  - **gotcha ที่เจอจริง:** (1) `computed` ที่เช็ค getter ของ localStorage ก่อน ref จะ short-circuit แล้ว**ไม่มี reactive dependency เลย** → cache ค่าแรกถาวร (ต้นเหตุทัวร์ไม่เด้ง + realtime ไม่ต่อ); (2) บันทึกการกินต้อง `feedingApi.record()` **ก่อน** `crabApi.update()` ไม่งั้นโน้ตเก่าทับของใหม่/เกิดประวัติซ้ำ; (3) route ที่มี param ห้ามอยู่ใน `navRoutes` (เมนูจะขึ้นรายการพัง) → แยก `hiddenRoutes`; (4) `stopRealtime()` ล้าง handlers → component ที่อยู่ยาวต้องลงทะเบียนใน `watch(isAuthenticated)` ไม่ใช่ `onMounted`
+  - ดูรายละเอียดเต็ม + ข้อควรระวังในหัวข้อ NEXT ด้านบน และตาราง endpoint ใน [API.md](./API.md) หมวด H
+- **2026-08-02** — **แก้เครื่องร้อนตอนบันทึกการกิน (backdrop-filter)** — FE-only (farmland-web), `vue-tsc`+`vite build` ผ่าน, ไม่ต้อง migrate: root cause = CSS `backdrop-filter: blur()` (หนักมือถือสุด) ทำงานทุกครั้งที่บันทึก ไม่ใช่แค่จบรอบ — ตัด `backdrop-filter` ออกจาก `FeedingQuestHud.vue` (โชว์ทุกครั้งบันทึก 1 ตัว) และ `FeedingCelebration.vue` (พลุจบรอบ 70 สปาร์ค `infinite` **ไม่เคยมี auto-dismiss** → เพิ่ม timer ปิดเอง 15 วิ). ตรวจแล้ว WebSocket/polling + แอนิเมชันปูขยับ/auto-scroll ไม่ใช่ตัวปัญหา ดูรายละเอียดเต็มในหัวข้อ NEXT ด้านบน
+- **2026-08-02** — **scroll อัตโนมัติไปโซนการกิน + ไอคอนขวดสารสีตามพารามิเตอร์น้ำ** — FE-only (farmland-web), `vue-tsc`+`vite build` ผ่าน, ไม่ต้อง migrate: (1) เปิด popup กล่องปูช่วงมีรอบให้อาหารเปิดอยู่ → เลื่อนลงไปโซน "การกิน" ให้อัตโนมัติ (`CrabsView.vue` `scrollToFeedZone`); (2) วาดไอคอนขวดรีเอเจนต์ SVG เอง (`plugins/waterBottleIcons.ts`, custom Vuetify icon set เรียกผ่าน `waterParamIcon(param)` → `water:<key>`) แทน mdi ทั่วไปในทุกจุดที่อ้างอิงพารามิเตอร์น้ำ (WaterView/CrabsView/DosingView) — สีตามผู้ใช้กำหนด (Mg/Ca ม่วง, แอมโมเนีย เขียว, pH น้ำเงิน, อัลคาไลน์ เทา, ไนไตรท์ แดง, โพแทสเซียม ขาว, เค็มเลือกฟ้าอมเขียวเอง). ดูรายละเอียดเต็มในหัวข้อ NEXT ด้านบน
 - **2026-08-02** — **แก้บั๊กฟีดแบ็ค 2 ข้อจากฟีเจอร์ให้อาหาร (Phase 21)** — BE tsc + FE build ผ่าน, ✅ backfill DB จริงแล้ว, ไม่ต้อง migrate: (1) `scoreFromTags` (`lib/feedingCycle.ts`) เคยบังคับต้องกินทั้งปลา+หอยถึงจะได้ 100 → แก้ให้รอบที่ให้อาหารชนิดเดียวได้ 100 เต็มถ้ากินหมด (แยกแท็ก "ปฏิเสธ" ออกจาก "ไม่มีข้อมูล") + backfill รอบเก่า (98/117 entries, 3/3 rounds); (2) พลุฉลองไม่ขึ้นทุกจอ (ทั้งที่ HUD อัปเดตทุกจอ) — root cause เป็น FE ล้วน 2 จุด: guard กันฉลองซ้ำใช้ `localStorage` (ข้ามได้ทุกแท็บของเบราว์เซอร์เดียวกัน → เปลี่ยนเป็น `sessionStorage`) + จอที่ตกไปโหมด polling ไม่รู้ว่ารอบปิดแล้วเพราะ `getCurrentRound()` กรองแค่ `status:'OPEN'` (→ เพิ่ม `feedingApi.get(roundId)` ดึงรอบเดิมซ้ำก่อนเคลียร์). ดูรายละเอียดเต็มในหัวข้อ NEXT ด้านบน
 - **2026-07-31** — **แผนให้อาหาร + รอบบันทึกการกิน (WebSocket) + โหมดสอน + ธีม + รายงานมือถือ** (แผน `1-theme-sharded-quiche.md`) — BE tsc + FE build ผ่าน, ✅ migration apply แล้ว, ✅ smoke test BE ผ่านหมด:
   - **migration `phase21_feeding_rounds`** (3 ตารางใหม่ ไม่ ALTER ของเดิม) + **`phase22_user_ui_prefs`** (`User.uiPrefs Json?`) — apply ลง DB จริงแล้วทั้งคู่ (17 migrations)

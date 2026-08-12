@@ -13,6 +13,7 @@ import { ledgerRouter, dashboardRouter } from './finance';
 import inventoryRoutes from './inventory';
 import uploadRoutes from './uploads';
 import publicRoutes from './public';
+import villageRoutes from './village';
 
 const api = Router();
 
@@ -54,6 +55,8 @@ api.use('/ledger', ledgerRouter);
 api.use('/dashboard', dashboardRouter);
 // G. คลังของ (อาหาร/สาร/อุปกรณ์ + แจ้งเตือนใกล้หมด)
 api.use('/inventory', inventoryRoutes);
+// H. หมู่บ้านฟาร์ม (Phase 23) — เยี่ยมชมฟาร์มคนอื่น / ตกแต่ง / จดหมาย
+api.use('/village', villageRoutes);
 // รูปภาพประวัติพัฒนาการปู (Cloudinary)
 api.use('/uploads', uploadRoutes);
 

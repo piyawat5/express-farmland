@@ -349,6 +349,50 @@
 
 - **แจ้งเตือนอัตโนมัติ:** `scheduler.tick` เช็คของที่ `currentQty <= lowThreshold` → สร้าง Task `RESTOCK` (กันซ้ำ, ผูกเจ้าของ) → เข้าเมลสรุป; เติมจนพ้นเกณฑ์ → ปิด Task ให้อัตโนมัติ
 
+## H. หมู่บ้านฟาร์ม — เยี่ยมชมฟาร์มคนอื่น / ตกแต่ง / จดหมาย (Phase 23)
+
+**สิทธิ์:** `canViewFarm` (lib/scope.ts) = เจ้าของ **หรือ** `CrabSystem.villageOpen=true` **หรือ** มี `FarmAccess` APPROVED ที่ยังไม่ถูกถอน **หรือ** ADMIN
+⚠️ เข้าไม่ได้ = **404 ไม่ใช่ 403** (ตาม `assertOwnership` — กันใช้ endpoint ไล่เดาว่า systemId ไหนมีอยู่จริง)
+⚠️ `villageOpen` **คนละเรื่องกับ `publicEnabled`** (หน้าร้าน QR ของลูกค้าที่ไม่ได้ล็อกอิน) — ห้ามใช้ปนกัน
+
+| Method | Path | หมายเหตุ |
+|---|---|---|
+| GET | `/api/village/users` | ผู้ใช้ที่ active **ทุกคน** + สถานะสิทธิ์ของเราต่อคนนั้น → `{ id, name, avatarUrl, farmAvatar, systems[], access, canVisit, accessId }`; `access` = `SELF\|APPROVED\|OPEN\|PENDING\|DENIED\|NONE`; `email` เฉพาะ ADMIN |
+| GET | `/api/village/me` | `{ me, systems[], grantsGiven[], grantsReceived[] }` |
+| PATCH | `/api/village/me/avatar` | หน้าตาตัวละคร `{ skin?, face?, hair?, hairColor?, shirt?, shirtColor?, pants?, pantsColor?, hat?, hatColor?, accessory? }` — zod `.strict()` (key แปลกปลอม = 400), สีต้องเป็น `#rrggbb` |
+| GET | `/api/village/inbox` | `{ pending[], unreadLetters, unreadReplies }` — **derive จากข้อมูลจริง ไม่มีตาราง notification** |
+| POST | `/api/village/replies/seen` | ผู้เขียนรับทราบคำตอบแล้ว → เคลียร์ badge |
+| POST | `/api/village/access/request` | `{ ownerId*, message? }` → upsert เป็น PENDING + ยิง WS `village.request` ให้เจ้าของ; ขอตัวเอง = 400; อนุมัติอยู่แล้ว = คืน `alreadyApproved:true` ไม่รบกวนเจ้าของ |
+| POST | `/api/village/access/:id/approve` \| `/deny` | เจ้าของเท่านั้น → ยิง WS `village.access` ให้ผู้ขอ |
+| DELETE | `/api/village/access/:id` | ถอนสิทธิ์ (เจ้าของ) หรือยกเลิกคำขอ (ผู้ขอ) → set `revokedAt` + **เตะ socket ที่ยืนอยู่ในฟาร์มออกทันที** |
+| GET | `/api/village/farms/:systemId` | snapshot ก้อนเดียว `{ system, boxes[], decor[], letters[], canEdit }`; `boxes` มีแค่ `{id, code, label, color, status, crabCount}` — **ไม่มีราคา/ต้นทุน/โน้ต**; ผู้มาเยือนเห็นเฉพาะจดหมายของตัวเอง |
+| GET | `/api/village/farms/:systemId/presence` | ใครเดินอยู่ในฟาร์มตอนนี้ (อ่านจาก memory ของ realtime.ts) — REST fallback ตอน WS ใช้ไม่ได้ |
+| PUT | `/api/village/farms/:systemId/decor` | `{ items: [{kind*, x*, y*, z?, rot?(0/90/180/270), scale?(50–200), flip?, variant?}] }` สูงสุด 300 ชิ้น — **แทนที่ผังทั้งชุด** (deleteMany+createMany ใน transaction); เจ้าของเท่านั้น |
+| GET/POST | `/api/village/farms/:systemId/letters` | POST `{ x*, y*, body*(≤500), mood? }`; กันสแปม ≤20 ฉบับ/คน/ฟาร์ม (เกิน = 400) |
+| POST | `/api/village/farms/:systemId/letters/read-all` | เจ้าของกดอ่านทั้งฟาร์มรวดเดียว |
+| POST | `/api/village/letters/:id/reply` | `{ reply*(≤500) }` — เจ้าของฟาร์มเท่านั้น (คนอื่น 403) |
+| DELETE | `/api/village/letters/:id` | ผู้เขียน หรือ เจ้าของฟาร์ม → soft delete |
+| PATCH | `/api/systems/:id` | **ใช้ของเดิม** — เพิ่มฟิลด์ `villageOpen: boolean` (ปิดสวิตช์ = เตะคนที่เข้ามาได้เพราะสวิตช์นี้ออก) |
+
+### WebSocket — ห้องหมู่บ้าน (แยกจากห้องข้อมูล)
+⚠️ `ws.farmRooms` **แยกจาก `ws.rooms` โดยตั้งใจ** — `rooms` ส่ง `feeding.*` ที่มี snapshot รอบเต็ม (รหัสปู/โน้ต/คะแนน/ชื่อคนบันทึก) แขกที่เดินเข้ามาต้องไม่ได้รับ
+สิทธิ์เช็ค **ครั้งเดียวตอน `village.enter`** (1 query) — หลังจากนั้น `village.move` (10 Hz) เช็คแค่ `Set.has` ใน memory ไม่มี query เลย
+
+| ทิศทาง | ข้อความ | หมายเหตุ |
+|---|---|---|
+| → server | `{t:'village.enter', systemId, x?, y?}` | เช็ค `canViewFarm`; ไม่ผ่าน = `{t:'error'}` |
+| → server | `{t:'village.leave', systemId}` | |
+| → server | `{t:'village.move', systemId, x, y, f}` | `f` = `u/d/l/r`; server clamp พิกัด 0–200 + ปัด 1 ตำแหน่ง; **ทิ้งเงียบถ้ามาถี่กว่า 80ms** |
+| → server | `{t:'village.emote', systemId, emote}` | |
+| ← client | `village.entered` | `{ peers: PresenceUser[], me }` — snapshot เต็มตอนเข้า |
+| ← client | `village.join` / `village.leave` / `village.move` / `village.emote` | **ไม่ echo กลับหาคนส่ง** (`publishFarm(..., except)`) |
+| ← client | `village.letter` / `village.decor` | **แค่ "เคาะ" ไม่มี payload** → ให้ client ไป GET ใหม่ (กันชน `maxPayload` 16KB ตอนผังมี 300 ชิ้น) |
+| ← client | `village.request` | ส่งถึงเจ้าของฟาร์มทุกเครื่อง (`publishToUser`) ไม่ว่าอยู่หน้าไหน → ป๊อปอัพ |
+| ← client | `village.access` | `{ ownerId, systemIds, granted }` — `granted:false` = ถูกถอนสิทธิ์/ถูกเตะ |
+
+- **ตำแหน่ง avatar ไม่ถูกเก็บลง DB เลย** (อยู่ใน memory ของ `realtime.ts`) — reconnect = เกิดใหม่ที่จุด spawn
+- ไม่มี presence registry กลาง — scan `wss.clients` กรอง `farmRooms.has(id)` → cleanup ตอน disconnect ได้ฟรี
+
 ## Health
 | Method | Path | |
 |---|---|---|

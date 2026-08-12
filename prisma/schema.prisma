@@ -33,6 +33,10 @@ model User {
   active        Boolean  @default(true)
   /// ค่าตั้งค่า UI ต่อผู้ใช้ — { tourDoneAt, tourSkipped, tourVersion } (Phase 22: โหมดสอน)
   uiPrefs       Json?
+  /// หน้าตาตัวละครในหมู่บ้านฟาร์ม (Phase 23) —
+  /// { skin, face, hair, hairColor, shirt, shirtColor, pants, pantsColor, hat, hatColor, accessory }
+  /// แยกจาก uiPrefs เพราะต้องส่งให้ "คนอื่น" เห็น แต่ uiPrefs เป็นค่าส่วนตัว (ห้ามเผย)
+  farmAvatar    Json?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -49,6 +53,11 @@ model User {
   reminderRules ReminderRule[]
   ledgerEntries LedgerEntry[]
   feedingEntries FeedingEntry[] // การกินที่ผู้ใช้นี้เป็นคนบันทึก (Phase 21)
+
+  // ── หมู่บ้านฟาร์ม (Phase 23) ──
+  farmAccessGiven    FarmAccess[] @relation("FarmAccessOwner") // สิทธิ์ที่เราให้คนอื่นมาเยี่ยมฟาร์มเรา
+  farmAccessReceived FarmAccess[] @relation("FarmAccessVisitor") // สิทธิ์ที่คนอื่นให้เราไปเยี่ยมเขา
+  farmLetters        FarmLetter[] @relation("FarmLetterAuthor")
 }
 
 /// บัญชี OAuth ที่ผูกกับ user (login with Google/Line — ไม่เก็บ password, ข้อ 1.2.3)
@@ -120,6 +129,9 @@ model CrabSystem {
   // หน้าร้าน public (QR) — ข้อ 5: publicEnabled=เปิดร้าน, publicSlug=โทเคนใน URL /shop/:slug
   publicEnabled Boolean @default(false)
   publicSlug    String? @unique
+  /// เปิดฟาร์มให้ "ผู้ใช้ที่ล็อกอินทุกคน" เดินเข้าชมได้เลยโดยไม่ต้องกดอนุมัติทีละคน (Phase 23)
+  /// ⚠️ คนละเรื่องกับ publicEnabled (หน้าร้าน QR ของลูกค้าที่ยังไม่ได้ล็อกอิน) — ห้ามใช้ปนกัน
+  villageOpen   Boolean @default(false)
   note         String?      @db.Text
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
@@ -137,6 +149,8 @@ model CrabSystem {
   ledgerEntries LedgerEntry[]
   feedingPlan   FeedingPlan? // แผนให้อาหารของระบบนี้ (Phase 21)
   feedingRounds FeedingRound[]
+  farmDecor     FarmDecor[] // ของตกแต่งที่วางไว้ในฟาร์ม (Phase 23)
+  farmLetters   FarmLetter[] // จดหมายที่ผู้มาเยือนฝากไว้ (Phase 23)
 }
 
 enum SystemStatus {
@@ -848,4 +862,87 @@ enum InventoryCategory {
   SUBSTANCE // สาร/จุลินทรีย์
   EQUIPMENT
   OTHER
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  H. หมู่บ้านฟาร์ม (Phase 23) — เยี่ยมชมฟาร์มคนอื่น / ตกแต่ง / ฝากจดหมาย
+//
+//  สิทธิ์เป็นระดับ "คนต่อคน" (FarmAccess) แต่พื้นที่ที่เดินจริงคือ CrabSystem
+//  เพราะห้อง WebSocket ที่มีอยู่แล้ว key ด้วย systemId → อนุมัติ 1 ครั้ง = เข้าได้ทุกระบบของคนนั้น
+//
+//  ⚠️ ไม่มีตารางเก็บตำแหน่ง avatar โดยตั้งใจ — ตำแหน่งอยู่ใน memory ของ realtime.ts ล้วน
+//     (เขียน DB 10 ครั้ง/วินาที/คน = สิ่งที่แย่ที่สุดที่จะทำกับ shared hosting) reconnect = เกิดใหม่ที่จุด spawn
+// ─────────────────────────────────────────────────────────────────────
+
+/// สิทธิ์เยี่ยมชมฟาร์ม — อนุมัติแล้วอยู่ถาวรจนกว่าเจ้าของจะถอน (revokedAt)
+/// ผู้ขอไม่ต้องขอใหม่ทุกครั้ง; เก็บแถวไว้แม้ถอนแล้ว (ดูประวัติ + กันกดขอรัว)
+model FarmAccess {
+  id          Int              @id @default(autoincrement())
+  owner       User             @relation("FarmAccessOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId     Int // เจ้าของฟาร์มที่ถูกขอเข้าชม
+  visitor     User             @relation("FarmAccessVisitor", fields: [visitorId], references: [id], onDelete: Cascade)
+  visitorId   Int // คนขอเข้าชม
+  status      FarmAccessStatus @default(PENDING)
+  message     String?          @db.VarChar(200) // ข้อความแนบตอนขอ
+  requestedAt DateTime         @default(now())
+  decidedAt   DateTime? // เจ้าของกดอนุมัติ/ปฏิเสธเมื่อไร
+  /// != null = ถอนสิทธิ์แล้ว (ตาม precedent RefreshToken.revokedAt)
+  /// ใช้ timestamp แทน enum REVOKED เพื่อให้ predicate ที่ใช้บ่อยยังสั้น: status=APPROVED AND revokedAt IS NULL
+  revokedAt   DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([ownerId, visitorId]) // 1 คู่ = 1 แถว (ขอซ้ำ = upsert กลับเป็น PENDING)
+  @@index([visitorId, status])
+  @@index([ownerId, status])
+}
+
+enum FarmAccessStatus {
+  PENDING // ขอแล้ว รอเจ้าของกด (ป๊อปอัพเด้งที่เครื่องเจ้าของ)
+  APPROVED // อนุมัติ — ถาวรจนกว่า revokedAt != null
+  DENIED // ปฏิเสธ (ขอใหม่ได้)
+}
+
+/// ของตกแต่ง 1 ชิ้นที่วางไว้ในฟาร์ม — พิกัดเป็น "ช่องตาราง" ไม่ใช่พิกเซล
+model FarmDecor {
+  id        Int        @id @default(autoincrement())
+  system    CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId  Int
+  /// คีย์ในแคตตาล็อกฝั่ง frontend เช่น "filter_tank" / "chair" / "palm" / "mailbox"
+  /// เป็น String ไม่ใช่ enum โดยตั้งใจ → เพิ่มของใหม่ได้โดยไม่ต้อง migrate (precedent: CrabHistory.zone)
+  kind      String     @db.VarChar(40)
+  x         Int // ช่องแนวนอน (0 = ซ้ายสุด)
+  y         Int // ช่องแนวตั้ง
+  z         Int        @default(0) // ลำดับซ้อนเมื่อ y เท่ากัน
+  rot       Int        @default(0) // 0 / 90 / 180 / 270
+  scale     Int        @default(100) // เปอร์เซ็นต์ 50–200 (เก็บ Int กัน float เพี้ยน)
+  flip      Boolean    @default(false)
+  variant   String?    @db.VarChar(24) // สี/แบบย่อย เช่น "green" หรือข้อความบนป้าย
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([systemId])
+}
+
+/// จดหมายที่ผู้มาเยือนปักไว้ตามจุดในฟาร์ม — เจ้าของตอบกลับได้ (ข้อ 1.5.2–1.5.4)
+model FarmLetter {
+  id                Int        @id @default(autoincrement())
+  system            CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId          Int
+  author            User       @relation("FarmLetterAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  authorId          Int
+  x                 Int // ปักตรงไหน (พิกัดตารางเดียวกับ FarmDecor)
+  y                 Int
+  body              String     @db.VarChar(500)
+  mood              String?    @db.VarChar(16) // สติกเกอร์อารมณ์ "heart"/"crab"/"star"
+  reply             String?    @db.VarChar(500) // เจ้าของตอบกลับ
+  repliedAt         DateTime?
+  readAt            DateTime? // เจ้าของเปิดอ่านแล้วเมื่อไร — null = ยังไม่อ่าน (ใช้ทำ badge)
+  authorReadReplyAt DateTime? // ผู้เขียนเห็นคำตอบแล้วหรือยัง (badge ฝั่งผู้เยี่ยม)
+  deletedAt         DateTime? // soft delete (แบบเดียวกับ Crab.deletedAt)
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  @@index([systemId, deletedAt])
+  @@index([authorId, deletedAt])
 }
