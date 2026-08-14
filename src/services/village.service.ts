@@ -3,7 +3,8 @@ import { prisma } from '../lib/prisma';
 import { AppError, notFound } from '../lib/http';
 import { assertOwnership, canViewFarm, isAdmin } from '../lib/scope';
 import { assertCanEditSystem, assertCanViewFarm } from '../middleware/auth';
-import { publishFarm, publishToUser, revokeFarmAccess } from '../lib/realtime';
+import { publishFarm, publishToUser, refreshFarmProfile, revokeFarmAccess } from '../lib/realtime';
+import { listCrabProgressBySystem } from './crab.service';
 import type { AuthUser } from './auth.service';
 
 // ════════════════════════════════════════════════════════════════════
@@ -131,13 +132,20 @@ export async function getMyVillage(user: AuthUser) {
   return { me, systems, grantsGiven: given, grantsReceived: received };
 }
 
-/** เปลี่ยนหน้าตาตัวละคร (ข้อ 1.5.5) */
+/** เปลี่ยนหน้าตาตัวละคร / สัตว์ขี่ / สัตว์เลี้ยง (ข้อ 1.5.5 + ข้อ 8,10 ฟีดแบ็ค 2026-08-13) */
 export async function updateFarmAvatar(userId: number, config: Record<string, unknown>) {
   const updated = await prisma.user.update({
     where: { id: userId },
     // Json nullable: ส่ง object เสมอ (ไม่มีเคส null จาก route นี้) — แต่กันไว้ตาม normalizeSystemData
     data: { farmAvatar: (config as Prisma.InputJsonValue) ?? Prisma.DbNull },
     select: PUBLIC_USER_SELECT,
+  });
+  // ⚠️ socket cache โปรไฟล์ไว้ครั้งเดียวตอนต่อ (ws.profile) → ถ้าไม่ push ตรงนี้
+  // คนอื่นที่อยู่ในฟาร์มจะเห็นชุด/สัตว์ขี่ชุดเก่าจนกว่าเราจะ reconnect
+  refreshFarmProfile(userId, {
+    name: updated.name,
+    avatarUrl: updated.avatarUrl,
+    farmAvatar: updated.farmAvatar,
   });
   return updated;
 }
@@ -280,10 +288,77 @@ async function ownedSystemIdList(ownerId: number): Promise<number[]> {
 //  2. snapshot ฟาร์ม (สำหรับเดินเล่น)
 // ─────────────────────────────────────────────────────────────────────
 
+const DAY_MS = 86400000;
+
+/** อายุการเลี้ยง (วัน) — สูตรเดียวกับ CrabsView.ageDays: วันซื้อ ถ้าไม่มีใช้วันเช็คไข่/เนื้อ */
+function ageDaysOf(purchaseDate: Date | null, lastCheckedAt: Date | null): number | null {
+  const base = purchaseDate ?? lastCheckedAt;
+  if (!base) return null;
+  return Math.floor((Date.now() - base.getTime()) / DAY_MS);
+}
+
+/**
+ * ปู 1 ตัวเท่าที่หน้าฟาร์มต้องใช้วาดกล่อง (ข้อ 1/7 ฟีดแบ็ค 2026-08-13)
+ * ⚠️ ห้ามเพิ่ม purchasePrice / sourceSellerId / lockedForBuyerId ลง select นี้เด็ดขาด —
+ *    "อนุญาตให้เดินชมฟาร์ม" ไม่ได้แปลว่าให้ดูต้นทุนปูกับรายชื่อลูกค้าของเจ้าของ
+ *    (purchaseDate ดึงมาเพื่อคำนวณอายุเท่านั้น แล้วตัดออกก่อนส่งให้แขก)
+ */
+const CRAB_CARD_SELECT = {
+  id: true,
+  code: true,
+  boxId: true,
+  type: true,
+  sex: true,
+  grade: true,
+  status: true,
+  weightG: true,
+  currentFirmnessPct: true,
+  cableTieColor: true,
+  feedingNote: true,
+  lastCheckedAt: true,
+  purchaseDate: true,
+} as const;
+
+type CrabCardRow = {
+  id: number;
+  code: string | null;
+  boxId: number | null;
+  type: string;
+  sex: string;
+  grade: string | null;
+  status: string;
+  weightG: Prisma.Decimal | null;
+  currentFirmnessPct: number | null;
+  cableTieColor: string | null;
+  feedingNote: string | null;
+  lastCheckedAt: Date | null;
+  purchaseDate: Date | null;
+};
+
+function toCrabCard(c: CrabCardRow, isOwner: boolean) {
+  return {
+    id: c.id,
+    code: c.code,
+    boxId: c.boxId,
+    type: c.type,
+    sex: c.sex,
+    grade: c.grade,
+    status: c.status,
+    weightG: c.weightG,
+    currentFirmnessPct: c.currentFirmnessPct,
+    cableTieColor: c.cableTieColor,
+    feedingNote: c.feedingNote,
+    lastCheckedAt: c.lastCheckedAt,
+    ageDays: ageDaysOf(c.purchaseDate, c.lastCheckedAt),
+    // วันซื้อบอกเป็นนัยว่าเจ้าของรับปูล็อตไหนมาเมื่อไร → ให้เฉพาะเจ้าของ
+    purchaseDate: isOwner ? c.purchaseDate : undefined,
+  };
+}
+
 /**
  * ข้อมูลทุกอย่างที่หน้าฟาร์มต้องใช้ ในคำขอเดียว
- * ⚠️ ไม่มีข้อมูลเชิงธุรกิจของปูเลย (ต้นทุน/ราคา/โน้ต) — หน้าหมู่บ้านคือ "สถานที่" ไม่ใช่หน้าข้อมูล
- *    แขกเห็นแค่ว่ากล่องไหนมีปูกี่ตัว เพื่อให้ฟาร์มดูมีชีวิต
+ * ⚠️ ข้อมูลปูที่ส่งไปมีแต่ "ที่มองเห็นได้จากการยืนดูกล่อง" (ขีด/ชนิด/%ไข่/อายุ/การกิน)
+ *    ไม่มีต้นทุน/ราคา/ผู้ขาย/ลูกค้าที่จอง — ดู CRAB_CARD_SELECT
  */
 export async function getFarmSnapshot(user: AuthUser, systemId: number) {
   await assertCanViewFarm(user, systemId);
@@ -302,17 +377,17 @@ export async function getFarmSnapshot(user: AuthUser, systemId: number) {
 
   const isOwner = isAdmin(user) || system.ownerId === user.id;
 
-  const [boxes, decor, letters] = await Promise.all([
+  const [boxes, crabs, decor, letters] = await Promise.all([
     prisma.crabBox.findMany({
       where: { systemId },
-      select: {
-        id: true,
-        code: true,
-        label: true,
-        color: true,
-        status: true,
-        _count: { select: { crabs: { where: { deletedAt: null, status: { not: 'SOLD' } } } } },
-      },
+      select: { id: true, code: true, label: true, color: true, status: true },
+      orderBy: { id: 'asc' },
+    }),
+    // ปูที่ยังอยู่จริง (ไม่นับขาย/ตาย) — เกณฑ์เดียวกับ crabsInBox() ในหน้าปู
+    // ไม่งั้นตัวเลขบนกล่องในหมู่บ้านกับในหน้าปูจะไม่ตรงกัน
+    prisma.crab.findMany({
+      where: { systemId, deletedAt: null, status: { in: ['FATTENING', 'READY'] } },
+      select: CRAB_CARD_SELECT,
       orderBy: { id: 'asc' },
     }),
     prisma.farmDecor.findMany({ where: { systemId }, orderBy: { id: 'asc' } }),
@@ -344,18 +419,88 @@ export async function getFarmSnapshot(user: AuthUser, systemId: number) {
       owner: system.owner,
       villageOpen: system.villageOpen,
     },
-    boxes: boxes.map((b) => ({
-      id: b.id,
-      code: b.code,
-      label: b.label,
-      color: b.color,
-      status: b.status,
-      crabCount: b._count.crabs,
-    })),
+    boxes: boxes.map((b) => {
+      const inBox = crabs.filter((c) => c.boxId === b.id).map((c) => toCrabCard(c, isOwner));
+      return {
+        id: b.id,
+        code: b.code,
+        label: b.label,
+        color: b.color,
+        status: b.status,
+        crabCount: inBox.length,
+        crabs: inBox,
+      };
+    }),
     decor,
     letters,
     canEdit: isOwner,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  2.1 กล่องปูในฟาร์ม (ข้อ 1/7 ฟีดแบ็ค 2026-08-13)
+//      แขกกดดูได้เหมือนหน้าปู แต่ read-only — การ "แก้" ไปใช้ PATCH /crabs/:id
+//      ของเดิม (มี assertOwnership อยู่แล้ว) ไม่ต้องเปิดทางเขียนใหม่ที่นี่
+// ─────────────────────────────────────────────────────────────────────
+
+/** โซนประวัติที่แขกดูได้ — SOURCE ถูกตัดทิ้งเพราะ snapshot มี purchasePrice อยู่ข้างใน */
+const VISITOR_ZONES = new Set(['MEASURE', 'FEEDING', 'CLASSIFY']);
+
+export async function getFarmCrab(user: AuthUser, systemId: number, crabId: number) {
+  await assertCanViewFarm(user, systemId);
+  const crab = await prisma.crab.findFirst({
+    where: { id: crabId, systemId, deletedAt: null },
+    select: {
+      ...CRAB_CARD_SELECT,
+      note: true,
+      purchasePrice: true,
+      sourceSellerId: true,
+      lockedForBuyerId: true,
+      createdAt: true,
+      box: { select: { id: true, code: true, label: true } },
+      system: { select: { ownerId: true } },
+      history: { orderBy: { recordedAt: 'desc' }, take: 50 },
+    },
+  });
+  if (!crab) throw notFound('ไม่พบปูตัวนี้');
+
+  const isOwner = isAdmin(user) || crab.system.ownerId === user.id;
+  const history = crab.history.filter((h) => isOwner || VISITOR_ZONES.has(h.zone));
+
+  return {
+    crab: {
+      ...toCrabCard(crab, isOwner),
+      box: crab.box,
+      createdAt: crab.createdAt,
+      // ข้อมูลเชิงธุรกิจ = เจ้าของเท่านั้น (แขกได้ undefined → หายไปจาก JSON)
+      note: isOwner ? crab.note : undefined,
+      purchasePrice: isOwner ? crab.purchasePrice : undefined,
+      sourceSellerId: isOwner ? crab.sourceSellerId : undefined,
+      lockedForBuyerId: isOwner ? crab.lockedForBuyerId : undefined,
+    },
+    history,
+    canEdit: isOwner,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  2.2 แท่นหนังสือประจำฟาร์ม (ข้อ 9 ฟีดแบ็ค 2026-08-13)
+//      แขกที่เข้าชมได้ เปิดดูค่าน้ำ + พัฒนาการปูของฟาร์มนั้นได้
+//      (ตั้งใจให้ "อ่านได้" เพราะเป็นข้อมูลการเลี้ยง ไม่ใช่ข้อมูลการค้า)
+// ─────────────────────────────────────────────────────────────────────
+
+export async function getFarmLogbook(user: AuthUser, systemId: number) {
+  await assertCanViewFarm(user, systemId);
+  const [tests, targets, progress] = await Promise.all([
+    prisma.waterTest.findMany({
+      where: { systemId },
+      orderBy: { testedAt: 'desc' },
+      take: 40,
+    }),
+    prisma.waterTarget.findMany({ where: { systemId }, orderBy: { parameter: 'asc' } }),
+    listCrabProgressBySystem(systemId),
+  ]);
+  return { tests, targets, progress };
 }
 
 // ─────────────────────────────────────────────────────────────────────

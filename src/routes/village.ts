@@ -36,6 +36,14 @@ const avatarBody = z
     hat: partKey.nullable().optional(),
     hatColor: hexColor.optional(),
     accessory: partKey.nullable().optional(),
+    // ── สัตว์ขี่ + สัตว์เลี้ยง (ข้อ 8/10 ฟีดแบ็ค 2026-08-13) ──
+    // เก็บใน farmAvatar เพราะ "คนอื่นต้องเห็น" (uiPrefs เป็นค่าส่วนตัว) และไม่ต้อง migrate
+    // riding แยกจาก mount: เลือกสัตว์ไว้แล้วแต่ลงจากหลังได้โดยไม่ลืมว่าเลือกตัวไหน
+    mount: partKey.nullable().optional(),
+    mountColor: hexColor.optional(),
+    riding: z.boolean().optional(),
+    pet: partKey.nullable().optional(),
+    petColor: hexColor.optional(),
   })
   .strict();
 
@@ -154,6 +162,31 @@ villageRouter.get(
   requireFarmView(systemIdFromParam('systemId')),
   asyncHandler(async (req, res) => {
     res.json(serialize(farmPresence(Number(req.params.systemId))));
+  }),
+);
+
+// รายละเอียดปู 1 ตัวในฟาร์ม (ข้อ 1 — แขกดูได้ read-only, แก้ไปใช้ PATCH /crabs/:id ของเดิม)
+villageRouter.get(
+  '/farms/:systemId/crabs/:crabId',
+  validate({
+    params: systemIdParam.extend({ crabId: z.coerce.number().int().positive() }),
+  }),
+  asyncHandler(async (req, res) => {
+    const out = await svc.getFarmCrab(
+      req.user!,
+      Number(req.params.systemId),
+      Number(req.params.crabId),
+    );
+    res.json(serialize(out));
+  }),
+);
+
+// แท่นหนังสือ: ค่าน้ำ + พัฒนาการปูของฟาร์มนี้ (ข้อ 9)
+villageRouter.get(
+  '/farms/:systemId/logbook',
+  validate({ params: systemIdParam }),
+  asyncHandler(async (req, res) => {
+    res.json(serialize(await svc.getFarmLogbook(req.user!, Number(req.params.systemId))));
   }),
 );
 

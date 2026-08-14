@@ -448,7 +448,18 @@ function toMeasureRound(h: { recordedAt: Date; snapshot: Prisma.JsonValue }): Me
 
 /** ภาพรวมพัฒนาการปูที่ยังเลี้ยงอยู่ (before/after 2 รอบวัดล่าสุด) — สำหรับหน้า "พัฒนาการปู" */
 export async function listCrabProgress(user: AuthUser, systemId?: number): Promise<CrabProgress[]> {
-  const scope = await systemScopeWhere(user, systemId);
+  return progressWhere(await systemScopeWhere(user, systemId));
+}
+
+/**
+ * พัฒนาการปูของ "ฟาร์มหนึ่ง" โดยไม่ผ่าน scope เจ้าของ — ใช้จากหมู่บ้านฟาร์ม (แท่นหนังสือ ข้อ 9)
+ * ⚠️ ผู้เรียกต้อง assertCanViewFarm มาก่อนเสมอ (ฟังก์ชันนี้ไม่เช็คสิทธิ์ให้)
+ */
+export async function listCrabProgressBySystem(systemId: number): Promise<CrabProgress[]> {
+  return progressWhere({ systemId });
+}
+
+async function progressWhere(scope: Prisma.CrabWhereInput): Promise<CrabProgress[]> {
   const crabs = await prisma.crab.findMany({
     where: { ...scope, status: { in: ['FATTENING', 'READY'] }, deletedAt: null },
     orderBy: [{ boxId: 'asc' }, { id: 'asc' }],

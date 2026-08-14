@@ -359,13 +359,15 @@
 |---|---|---|
 | GET | `/api/village/users` | ผู้ใช้ที่ active **ทุกคน** + สถานะสิทธิ์ของเราต่อคนนั้น → `{ id, name, avatarUrl, farmAvatar, systems[], access, canVisit, accessId }`; `access` = `SELF\|APPROVED\|OPEN\|PENDING\|DENIED\|NONE`; `email` เฉพาะ ADMIN |
 | GET | `/api/village/me` | `{ me, systems[], grantsGiven[], grantsReceived[] }` |
-| PATCH | `/api/village/me/avatar` | หน้าตาตัวละคร `{ skin?, face?, hair?, hairColor?, shirt?, shirtColor?, pants?, pantsColor?, hat?, hatColor?, accessory? }` — zod `.strict()` (key แปลกปลอม = 400), สีต้องเป็น `#rrggbb` |
+| PATCH | `/api/village/me/avatar` | หน้าตาตัวละคร `{ skin?, face?, hair?, hairColor?, shirt?, shirtColor?, pants?, pantsColor?, hat?, hatColor?, accessory?, mount?, mountColor?, riding?, pet?, petColor? }` — zod `.strict()` (key แปลกปลอม = 400), สีต้องเป็น `#rrggbb`, key ≤24 ตัวอักษร. ⚠️ **แทนที่ทั้งก้อน** (ไม่ merge) → client ต้องส่ง config ครบทุกครั้ง; บันทึกแล้ว push `village.join` ให้คนในฟาร์มเห็นชุด/สัตว์ขี่ใหม่ทันที (`refreshFarmProfile`) |
 | GET | `/api/village/inbox` | `{ pending[], unreadLetters, unreadReplies }` — **derive จากข้อมูลจริง ไม่มีตาราง notification** |
 | POST | `/api/village/replies/seen` | ผู้เขียนรับทราบคำตอบแล้ว → เคลียร์ badge |
 | POST | `/api/village/access/request` | `{ ownerId*, message? }` → upsert เป็น PENDING + ยิง WS `village.request` ให้เจ้าของ; ขอตัวเอง = 400; อนุมัติอยู่แล้ว = คืน `alreadyApproved:true` ไม่รบกวนเจ้าของ |
 | POST | `/api/village/access/:id/approve` \| `/deny` | เจ้าของเท่านั้น → ยิง WS `village.access` ให้ผู้ขอ |
 | DELETE | `/api/village/access/:id` | ถอนสิทธิ์ (เจ้าของ) หรือยกเลิกคำขอ (ผู้ขอ) → set `revokedAt` + **เตะ socket ที่ยืนอยู่ในฟาร์มออกทันที** |
-| GET | `/api/village/farms/:systemId` | snapshot ก้อนเดียว `{ system, boxes[], decor[], letters[], canEdit }`; `boxes` มีแค่ `{id, code, label, color, status, crabCount}` — **ไม่มีราคา/ต้นทุน/โน้ต**; ผู้มาเยือนเห็นเฉพาะจดหมายของตัวเอง |
+| GET | `/api/village/farms/:systemId` | snapshot ก้อนเดียว `{ system, boxes[], decor[], letters[], canEdit }`; `boxes` = `{id, code, label, color, status, crabCount, crabs[]}` โดย `crabs[]` = `{id, code, type, sex, grade, status, weightG, currentFirmnessPct, cableTieColor, feedingNote, lastCheckedAt, ageDays}` (**ไม่มีราคา/ต้นทุน/ผู้ขาย/คนจอง**; `purchaseDate` ให้เฉพาะเจ้าของ) นับเฉพาะปู `FATTENING/READY` เหมือนหน้าปู; ผู้มาเยือนเห็นเฉพาะจดหมายของตัวเอง |
+| GET | `/api/village/farms/:systemId/crabs/:crabId` | รายละเอียดปู 1 ตัว + ประวัติแยกโซน → `{ crab, history[], canEdit }`. **ผู้มาเยือนได้เฉพาะโซน MEASURE/FEEDING/CLASSIFY** (โซน SOURCE มี `purchasePrice` อยู่ใน snapshot จึงถูกตัดทั้งโซน) และไม่ได้ `note/purchasePrice/sourceSellerId/lockedForBuyerId`. **การแก้ไขใช้ `PATCH /api/crabs/:id` ของเดิม** (assert เจ้าของอยู่แล้ว) ไม่มีทางเขียนผ่าน `/village` |
+| GET | `/api/village/farms/:systemId/logbook` | สมุดบันทึกฟาร์ม (แท่นหนังสือกลางฟาร์ม) → `{ tests[] (40 รอบล่าสุด), targets[], progress[] }` — ข้อมูลการเลี้ยงล้วน ไม่มีข้อมูลการค้า |
 | GET | `/api/village/farms/:systemId/presence` | ใครเดินอยู่ในฟาร์มตอนนี้ (อ่านจาก memory ของ realtime.ts) — REST fallback ตอน WS ใช้ไม่ได้ |
 | PUT | `/api/village/farms/:systemId/decor` | `{ items: [{kind*, x*, y*, z?, rot?(0/90/180/270), scale?(50–200), flip?, variant?}] }` สูงสุด 300 ชิ้น — **แทนที่ผังทั้งชุด** (deleteMany+createMany ใน transaction); เจ้าของเท่านั้น |
 | GET/POST | `/api/village/farms/:systemId/letters` | POST `{ x*, y*, body*(≤500), mood? }`; กันสแปม ≤20 ฉบับ/คน/ฟาร์ม (เกิน = 400) |

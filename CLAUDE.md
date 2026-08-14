@@ -4,6 +4,46 @@
 > อัปเดตทุกครั้งที่มี decision สำคัญ / สร้าง module ใหม่ / เปลี่ยน schema
 
 ## 👉 ทำต่อจากตรงนี้ (NEXT — session ใหม่อ่านตรงนี้ก่อน)
+### 🏇 หมู่บ้านฟาร์มรอบขยาย 10 ข้อ (2026-08-14) — BE tsc + FE build ผ่าน, ✅ สโมคเทส REST 45 ข้อผ่าน (ลบ user ทดสอบแล้ว), **ไม่ต้อง migrate**
+- ⚠️ **ยังไม่ทดสอบบนเบราว์เซอร์จริง** — รอผู้ใช้เทส: กดกล่องปูในฟาร์ม, ปุ่มตี, ลากของ/เลื่อนจอในโหมดตกแต่ง, ปูพื้น, ขี่สัตว์, แท่นหนังสือ, สัตว์เลี้ยงเดินตาม
+- **ข้อ 1+7 (กล่องปูในฟาร์ม = เหมือนหน้าปู แต่แขกอ่านอย่างเดียว):** snapshot ส่ง `boxes[].crabs[]` มาด้วย → หน้ากล่องในโลกโชว์ จุดสีเคเบิลไทล์/ขีด/ไข่%/อายุ เหมือน `CrabsView`; กดแล้วเปิด `FarmBoxDialog.vue` (แท็บต่อตัว + โซนข้อมูลวัด/ชนิด/การกิน + ประวัติ + แนบรูป)
+  - **สิทธิ์:** แก้ผ่าน `PATCH /crabs/:id` ของเดิมเท่านั้น (assert เจ้าของอยู่แล้ว) — **ไม่เปิดทางเขียนใหม่ใน `/village` เลย**
+  - ⚠️ **แขกต้องไม่เห็นเงิน:** `CRAB_CARD_SELECT` ไม่มี `purchasePrice/sourceSellerId/lockedForBuyerId`; `purchaseDate` ให้เฉพาะเจ้าของ (ใช้คำนวณ `ageDays` ฝั่ง server แล้วตัดทิ้ง); **ประวัติโซน `SOURCE` ถูกตัดทั้งโซนสำหรับแขก** เพราะ `snapshot` JSON ข้างในมี `purchasePrice` (ทดสอบแล้วว่าไม่รั่ว)
+  - **กล่องปูใหญ่ขึ้นเป็น 2×2 ช่อง** (`world.ts` `BOX_W/BOX_H`) — 1 ช่อง = 48px เล็กเกินจะอ่านข้อมูลปูออก; ยังเว้นทางเดิน 1 แถวระหว่างชั้นเหมือนเดิม
+- **ข้อ 2 (ปุ่มตี):** ปุ่มกลาง D-pad + **เว้นวรรค** → `village.emote` (ท่อเดิมของ Phase 23 รองรับอยู่แล้ว ไม่ต้องแก้ protocol) → คนอื่นเห็น 💥 + ท่าพุ่ง; ⚠️ `walk.ts` ต้องข้าม keydown ที่เกิดใน `.v-overlay` ไม่งั้นเว้นวรรคจะไปกดปุ่มใน dialog ไม่ได้
+- **ข้อ 3+5 (ของตกแต่ง 205 ชิ้น 6 หมวด):** รื้อ `catalog.ts` ใหม่ — พื้น 32 / อุปกรณ์ 34 / น้ำ 32 / เฟอร์นิเจอร์ 32 / ธรรมชาติ 38 / ประดับ 37 (ใช้ generator ช่วย เช่น `roundTree`/`flowerPatch`/`floorTiles`)
+  - **หมวด "พื้น" ต่างจากหมวดอื่น 3 อย่าง:** `fill:true` (ยืดเต็มช่อง ไม่งั้นปูต่อกันแล้วเห็นรอยต่อ), `solid:false` เสมอ, และ FarmCanvas วาดไว้ **ชั้นล่างสุดแยกต่างหาก** (`.farm-floor-layer` z-index 0) ไม่ยุ่งกับ z-index ตาม y
+  - ⚠️ **ห้ามใช้ `<defs>`/gradient ที่มี id ซ้ำ** — ของชิ้นเดียวถูกวางหลายที่ในหน้าเดียว id จะชนกัน (ตัวเดิม `filter_tank` ใช้ gradient อยู่ → เปลี่ยนเป็นสีทึบแล้ว)
+- **ข้อ 4+6 (ลากของ / เลื่อนจอ):** รวม gesture ไว้ที่ตัวจัดการเดียวใน `FarmCanvas` — pointerdown บนของ = ลากย้าย, บนพื้น = ลากเลื่อนจอ (เฉพาะโหมดตกแต่ง), ปล่อยโดยขยับ <5px = "แตะ" (วางของ/ฝากจดหมาย); โหมดตกแต่งกล้อง**หลุดจากตัวละคร** + มีปุ่ม 🎯 ดึงกล้องกลับ
+- **ข้อ 8 (สัตว์ขี่ 16 ตัว):** `lib/village/mounts.ts` — วาดในระบบพิกัดเดียวกับตัวละคร (ยกคนขึ้น `RIDER_LIFT`), **เดินเร็ว 2 เท่า** (`speedMult` ใน `walk.ts`), เรียก/ลงได้จากปุ่มใน toolbar ทุกฟาร์ม; เก็บใน `User.farmAvatar` (Json) **ไม่ต้อง migrate**; `premium:true` ตั้งไว้เผื่อขายในอนาคต (ยังใช้ได้ทุกตัว)
+  - ⚠️ **`PATCH /village/me/avatar` แทนที่ทั้งก้อน ไม่ merge** → client ต้องส่ง config ครบทุกครั้ง (ยืนยันด้วยเทสแล้ว)
+  - ⚠️ **`ws.profile` cache ตอนต่อครั้งเดียว** → ต้องมี `refreshFarmProfile()` push `village.join` ซ้ำ ไม่งั้นคนอื่นเห็นชุด/สัตว์ขี่เก่าจนกว่าเราจะ reconnect
+- **ข้อ 9 (แท่นหนังสือ):** มีทุกฟาร์มโดยอัตโนมัติจาก `world.ts` (ไม่ใช่ของตกแต่งที่ต้องวาง) → `GET /village/farms/:id/logbook` คืนค่าน้ำ 40 รอบ + เป้า + พัฒนาการปู (reuse `listCrabProgressBySystem`) → `FarmBookDialog.vue`
+  - ⚠️ ต้องกันแท่นวางทับจุดเกิด (จองช่องเกิดไว้ก่อนค้นหา) ไม่งั้นผู้เล่นเกิดในช่อง blocked = เดินไม่ได้ตั้งแต่วินาทีแรก
+- **ข้อ 10 (สัตว์เลี้ยง 16 ตัว):** `lib/village/pets.ts` — บอทเดินตามเจ้าของ + เดินเล่นเอง + กล่องข้อความ ("เมี๊ยว~"/"โฮ่ง!") ทุก 7–20 วิ; **ไม่มี state ฝั่ง server เลย** (คำนวณจากตำแหน่งเจ้าของในเครื่องแต่ละคน → เห็นสัตว์ของเพื่อนได้โดยไม่เพิ่ม traffic); ชนของแล้วเปลี่ยนเป้า (ไม่ทำ pathfinding)
+
+### 🐞 แก้บั๊กหมู่บ้านฟาร์มรอบแรกหลังผู้ใช้เทสจริง (2026-08-12) — FE-only, `vue-tsc`+`vite build` ผ่าน, ไม่ต้อง migrate
+- **บั๊ก 1 (ตัวละครค้างมุมซ้ายบน เดินไม่ได้) = TDZ ใน `FarmCanvas.vue`** — `watch(..., {immediate:true})` ถูกประกาศ **ก่อน** `const walk = useFarmWalk(...)` แต่ callback รอบแรกวิ่งตอน setup ทันที → อ่าน `walk` ที่ยังอยู่ใน TDZ → **โยน `ReferenceError` เงียบ ๆ (Vue จับ error ของ watcher เอง ไม่มีอะไรขึ้นจอ)** → `setPos(spawn)` ไม่เคยถูกเรียก → ตัวละครอยู่ที่ **(0,0) ซึ่งเป็นขอบโลกที่ block ทุกทิศ = เดินไม่ได้เลย**
+  - **ไม่เกี่ยวกับล็อกอินบัญชีเดียวกัน 2 เครื่อง** (ผู้ใช้เข้าใจผิด) — เป็น race: ถ้า watcher ยิงรอบที่ 2 (เช่น `draft` ถูก reassign หลังโหลด decor) `walk` พร้อมแล้ว → spawn ติด เครื่องที่เข้าจังหวะนั้นเลยเดินได้ อีกเครื่องไม่ได้
+  - แก้: ย้าย `useFarmWalk` ขึ้นก่อน watcher + เปลี่ยน guard `walk.x||walk.y` (0,0 = falsy แปลได้ 2 ความหมาย) เป็น `spawnedIn: number|null` เทียบ `system.id` → **สลับฟาร์มโดยไม่ unmount ก็เกิดใหม่ที่ทางเข้าฟาร์มใหม่ถูก**
+  - ⚠️ **บทเรียน: watcher `immediate:true` ที่อ้างถึง `const` ที่ประกาศทีหลัง = พังเงียบ** ไม่มี error ขึ้นจอเลย (error ของ watcher ถูก Vue กลืน) — ตรวจลำดับประกาศทุกครั้งที่ใช้ `immediate`
+- **บั๊ก 2 (บันทึกตกแต่งแล้วไม่มีอะไรเกิดขึ้น) = `<v-navigation-drawer temporary>` มี scrim คลุมทั้งหน้า** → คลิกแรกบนแผนที่ไปโดน scrim (drawer ปิดตัวเอง) ไม่ได้วางของ และ **ไม่มีทางเปิดแผงกลับ** (ปุ่มบันทึกอยู่ในแผง) → รื้อ `DecorPalette.vue` เป็น **แผงลอยในหน้า** (`position:absolute` ใน `.farm-page` ที่เพิ่ม `position:relative`) ไม่มี scrim
+  - เพิ่มปุ่ม 🚪`mdi-dresser` ใน toolbar เปิด/ปิดคลังของได้ตลอด + **กด "เสร็จแล้ว" ที่ยังมีของค้าง = บันทึกให้เลย** (ป้ายเปลี่ยนเป็น "บันทึก & ออก")
+  - **เดินได้ในโหมดตกแต่งแล้ว** (เดิม `locked` ล็อกไว้ → วางของได้แค่รอบตัว เพราะกล้องตามตัวละคร) → D-pad โชว์ทั้ง 2 โหมด; มือถือแผงอยู่ขอบล่างสูง **236px คงที่** + ยก D-pad ขึ้น 248px (ค่า 2 ตัวนี้ต้องตรงกัน อยู่คนละไฟล์)
+  - **มือถือ D-pad อยู่ขอบขวา** (ผู้ใช้ขอ — นิ้วโป้งขวาเอื้อมถึงถนัดกว่า) → ป้ายบอกใบ้ `.farm-hint` ต้องย้ายไปซ้าย + `max-width: calc(100% - 176px)` ไม่งั้นทับแป้น (แป้นกว้าง 146px); เดสก์ท็อปยังอยู่ซ้ายล่างเหมือนเดิม
+- **บั๊ก 4 (จอไม่เลื่อนตามตัวละคร) = โลกเล็กกว่าจอ** → `cameraStyle` เข้าเงื่อนไข "โลกเล็กกว่าจอ → จัดกึ่งกลาง" ค้างตลอด (ผังเดิม 14×20 ช่อง = 672×960px เล็กกว่าจอคอม) แก้ 3 จุด:
+  - `world.ts` ขยายโลก: `MIN_COLS 30`/`MIN_ROWS 22`, margin X 3→8 / top 3→5 / bottom 5→8 + **จัดผังกล่องกลางโลก** (`startX`) + spawn ย้ายไปทางเดินหน้าชั้นวาง (เดิมมุมล่างกลางโลก ไกลจากกล่อง)
+  - **ซูมเริ่มต้นคำนวณจากความสูงจอ** (`fitZoom`, เห็น ~13 ช่องแนวตั้ง, clamp 0.8–1.6) — ถ้าปล่อย zoom=1 บนจอ 2K โลกก็ยังเล็กกว่าจออยู่ดี
+  - อ่านขนาด viewport จาก **ref + `ResizeObserver`** ไม่ใช่ `el.clientWidth` ในกล้อง (กล้องคำนวณใหม่ทุกเฟรม = อ่าน layout ทุกเฟรม + ไม่รู้ตอนหมุนจอ) และ **เอา `transition: transform` ออกจาก `.farm-camera`** (ขยับทุกเฟรม + transition = ภาพหน่วงตามหลังตัวละคร)
+- **บั๊ก 3 (ชิป "ออฟไลน์") = ไม่ใช่บั๊กโค้ด — Plesk ไม่ส่ง WebSocket upgrade ให้ Node** ยืนยันแล้ว: `GET https://api-farmland.family-sivarom.com/ws` พร้อม header `Upgrade: websocket` **คืน 404 JSON ของ Express เราเอง** (`{"error":"ไม่พบ endpoint นี้"}`) = คำขอวิ่งถึง Express ในสภาพ "GET ธรรมดา" → **header `Upgrade`/`Connection` ถูก proxy ถอดทิ้งก่อนถึง Node** (ถ้าถึง Node จริง `ws` จะตอบ 101 หรือ 400 เปล่า ๆ ไม่ใช่ JSON ของเรา); `/api/health` ยืนยัน `realtime:{enabled:true,path:"/ws"}` = ฝั่งแอปเปิดอยู่แล้ว
+  - ✅ **แก้แล้ว (2026-08-12):** Plesk → `api-farmland.family-sivarom.com` → **Apache & nginx Settings → ติ๊ก "Proxy mode" ออก** → WS ต่อติดทันที (หน้ากล่องปูขึ้นชิป **"ซิงค์สด"** แทน "ซิงค์ทุก 5 วิ") — **Apache ที่อยู่กลางสายคือตัวถอด header `Upgrade` ทิ้ง**; nginx+Passenger คุยกันตรง ๆ รองรับ WebSocket อยู่แล้ว
+  - ⚠️ **2 โดเมนต้องตั้งค่าตรงข้ามกัน — ห้ามสลับ:** โดเมน **API ปิด** proxy mode (ต้องได้ WS), โดเมน **หน้าเว็บ `farm-land...` เปิด** proxy mode (SPA ต้องให้ Apache อ่าน `public/.htaccess` ไม่งั้น refresh บน route ลึกได้ 404 — nginx อ่าน .htaccess ไม่ได้)
+  - ⚠️ Host Atom **ปิดสิทธิ์ช่อง "Additional nginx/Apache directives"** สำหรับลูกค้า (เห็นได้เฉพาะ admin เซิร์ฟเวอร์) → แก้อะไรได้แค่ผ่านเช็คบ็อกซ์ในหน้านั้น ต้องคิดวิธีที่ไม่พึ่ง custom directive เสมอ
+  - **วิธีเทสว่า header ถึง Node หรือยัง (ไม่ต้องเดา):** ยิง upgrade ไปที่ path ที่**ไม่ใช่** `/ws` เช่น `/api/health` — ถึง Node จริง `ws` จะตอบ **400** (path ไม่ตรง); ถ้าได้ **200 + JSON health** = header ถูกถอดทิ้งก่อนถึง Node
+  - ⏭️ **ผลกระทบที่กว้างกว่าที่คิด:** WS ใช้ไม่ได้บน prod มาตั้งแต่ Phase 21 → การซิงค์รอบให้อาหาร 2 เครื่องวิ่งด้วย polling 5 วิมาตลอด (ใช้งานได้แต่ไม่ทันใจ) และหมู่บ้านฟาร์มจะไม่เห็นกันเดินเลย; ป๊อปอัพขอเข้าชม**ยังทำงาน** (poll ทุก 20 วิ ใน `VisitRequestPopup`)
+- **ตอบคำถาม "ล็อกอินบัญชีเดียวกัน 2 เครื่อง":** ไม่พัง — server แยกตาม socket (`ws.pos` ต่อ socket) ไม่ได้ dedupe ด้วย userId; FE `visiblePeers` กรอง `userId === ตัวเอง` อยู่แล้ว จึงไม่เห็นตัวเองซ้อน. รอบนี้กรองเพิ่มที่ต้นทาง (`village.entered`/`village.join` ใน `FarmSpaceView`) ด้วย เพราะเดิม **ตัวเลข "N คน" นับตัวเองซ้ำ**
+- ⚠️ ยังไม่ทดสอบบนเบราว์เซอร์จริง (typecheck+build ผ่าน) — รอผู้ใช้เทสเดิน/กล้องตาม/วางของ+บันทึก และแก้ Plesk ให้ WS ผ่านก่อนเทสการเห็นกันสด
+
 ### 🏡 หมู่บ้านฟาร์ม + ลดคลิกบันทึกการกิน + แก้ทัวร์ไม่เด้ง (2026-08-12) — BE tsc + FE build ผ่าน, ✅ migration apply แล้ว, ✅ สโมคเทส REST 12 ข้อ + WS 12 ข้อผ่านหมด
 แผน: `C:\Users\piyawat\.claude\plans\1-1-1-velvety-treasure.md`
 
@@ -396,7 +436,7 @@
 - **E. คู่ค้า:** `Contact`, `Transaction` (มี status QUOTE = คำนวณกำไรล่วงหน้า), `OutreachLog`
 - **F. การเงิน:** `LedgerEntry` (สมุดบัญชีรวม income/expense)
 - **G. คลัง:** `InventoryItem`
-- **H. หมู่บ้านฟาร์ม:** `FarmAccess` (สิทธิ์เยี่ยมชมคนต่อคน, อนุมัติแล้วถาวรจนกว่าจะ `revokedAt`), `FarmDecor` (ของตกแต่ง พิกัดเป็นช่องตาราง), `FarmLetter` (จดหมายปักตามจุด + คำตอบเจ้าของ) — ตำแหน่ง avatar **ไม่เก็บลง DB** (อยู่ใน memory ของ `lib/realtime.ts`)
+- **H. หมู่บ้านฟาร์ม:** `FarmAccess` (สิทธิ์เยี่ยมชมคนต่อคน, อนุมัติแล้วถาวรจนกว่าจะ `revokedAt`), `FarmDecor` (ของตกแต่ง พิกัดเป็นช่องตาราง), `FarmLetter` (จดหมายปักตามจุด + คำตอบเจ้าของ) — ตำแหน่ง avatar **ไม่เก็บลง DB** (อยู่ใน memory ของ `lib/realtime.ts`); **สัตว์ขี่/สัตว์เลี้ยงเก็บใน `User.farmAvatar` (Json)** ไม่มีตารางแยก และ**ตำแหน่งสัตว์เลี้ยงคำนวณในเครื่องล้วน** ไม่ซิงค์ผ่าน network
 
 ### หลักการออกแบบที่ตั้งใจไว้
 - `Substance` เป็น master list เดียว (เพิ่มสารใหม่ได้โดยไม่แก้โค้ด) — รองรับข้อ 2.1-2.3
@@ -457,6 +497,12 @@ prisma/schema.prisma
 > ค่าตัวเลขจริง (min/max, ปริมาณสาร, รอบวัน) ให้ถามผู้ใช้ตอนทำ seed เพราะผู้ใช้ custom เอง
 
 ## Log การเปลี่ยนแปลง
+- **2026-08-14** — **หมู่บ้านฟาร์มรอบขยาย 10 ข้อ** (กล่องปูแบบหน้าปู + ปุ่มตี + ของตกแต่ง 205 ชิ้น + หมวดพื้น + ลากของ + เลื่อนจอ + สัตว์ขี่ + แท่นหนังสือ + สัตว์เลี้ยง) — BE tsc + FE build ผ่าน, ✅ สโมคเทส REST 45 ข้อผ่านหมด (สร้าง user ชั่วคราว 6 คน → ลบทิ้งแล้ว), **ไม่ต้อง migrate** (mount/pet ลง `farmAvatar` Json, `kind` ของตกแต่งเป็น String อยู่แล้ว)
+  - ไฟล์ใหม่ FE: `lib/village/{mounts,pets}.ts`, `components/village/{FarmBoxDialog,FarmBookDialog}.vue`
+  - แก้ BE: `services/village.service.ts` (+`getFarmCrab`/`getFarmLogbook`/`CRAB_CARD_SELECT`), `services/crab.service.ts` (+`listCrabProgressBySystem`), `routes/village.ts` (+2 route, zod รับ mount/pet), `lib/realtime.ts` (+`refreshFarmProfile`)
+  - แก้ FE: `catalog.ts` (รื้อใหม่ 6 หมวด), `world.ts` (กล่อง 2×2 + แท่นหนังสือ), `walk.ts` (speedMult + เว้นวรรค + ข้าม `.v-overlay`), `FarmCanvas.vue` (รื้อ pointer/ชั้นพื้น/สัตว์เลี้ยง), `FarmAvatar.vue`, `DPad.vue`, `AvatarEditor.vue`, `FarmSpaceView.vue`, `types/api.ts`, `services/index.ts`, `lib/realtime.ts`
+  - **gotcha ที่เจอจริง:** (1) ประวัติโซน `SOURCE` มี `purchasePrice` อยู่ใน Json → ต้องตัดทั้งโซนสำหรับแขก ไม่ใช่กรองทีละ key; (2) `PATCH /village/me/avatar` แทนที่ทั้งก้อน; (3) `ws.profile` cache ตอนต่อ → เปลี่ยนชุดแล้วต้อง push เอง; (4) เว้นวรรคใน dialog ต้องไม่ถูก `preventDefault`; (5) แท่นหนังสืออาจไปตั้งทับจุดเกิด
+- **2026-08-12** — **แก้บั๊กหมู่บ้านฟาร์ม 3 ข้อ + ทำกล้องตามตัวละคร** — FE-only, `vue-tsc`+`vite build` ผ่าน, ไม่ต้อง migrate: (1) ตัวละครค้างมุมซ้ายบนเดินไม่ได้ = **TDZ** (watcher `immediate:true` อ้าง `const walk` ที่ประกาศทีหลัง → `ReferenceError` ที่ Vue กลืนไว้ → ไม่เคย spawn) ใน `FarmCanvas.vue`; (2) บันทึกตกแต่งไม่เห็นผล = `v-navigation-drawer temporary` มี scrim กินคลิกแรกบนแผนที่แล้วปิดตัวเองจนกดบันทึกไม่ได้ → รื้อ `DecorPalette.vue` เป็นแผงลอยไม่มี scrim + เดินได้ในโหมดตกแต่ง + กด "เสร็จแล้ว" บันทึกให้เลย; (3) กล้องไม่เลื่อนตาม = โลกเล็กกว่าจอ → ขยายโลกใน `world.ts` + ซูมเริ่มต้นตามความสูงจอ + `ResizeObserver` + เอา transition ออกจากกล้อง. ชิป "ออฟไลน์" **ไม่ใช่บั๊กโค้ด** — Plesk ถอด header `Upgrade` ทิ้งก่อนถึง Node (พิสูจน์ด้วย `GET /ws` ที่คืน 404 JSON ของ Express เอง) ดูวิธีแก้ในหัวข้อ NEXT
 - **2026-08-12** — **หมู่บ้านฟาร์ม (Phase 23) + ลดคลิกบันทึกการกิน + แก้ทัวร์ไม่เด้งหลัง OAuth** (แผน `1-1-1-velvety-treasure.md`) — BE tsc + FE build ผ่าน, ✅ migration apply แล้ว, ✅ สโมคเทส REST 12 ข้อ + WS 12 ข้อผ่านหมด (ลบ user/ระบบทดสอบทิ้งแล้ว):
   - **migration `phase23_farm_village`** (18 migrations): 3 ตารางใหม่ `FarmAccess`/`FarmDecor`/`FarmLetter` + enum `FarmAccessStatus` + `CrabSystem.villageOpen` + `User.farmAvatar` — **ไม่ ALTER อะไรที่ทำข้อมูลเดิมเสียหาย**
   - ไฟล์ใหม่ BE: `services/village.service.ts`, `routes/village.ts`; แก้ `lib/scope.ts` (+`canViewFarm`/`visitableSystemIds`), `middleware/auth.ts` (+`assertCanViewFarm`/`requireFarmView`), `lib/realtime.ts` (ห้อง `farmRooms` + `publishFarm`/`publishToUser`/`revokeFarmAccess`/`farmPresence`/`evictUnauthorizedVisitors`)

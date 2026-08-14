@@ -345,6 +345,25 @@ export function publishToUser(userId: number, event: ServerEvent): void {
   broadcast(JSON.stringify(serialize(event)), (ws) => ws.user?.id === userId);
 }
 
+/**
+ * โปรไฟล์ตัวละครเปลี่ยน (แต่งตัว / เปลี่ยนสัตว์ขี่ / เรียกสัตว์เลี้ยง) — ข้อ 8,10
+ * ⚠️ ws.profile ถูก cache ไว้ครั้งเดียวตอนต่อ (จงใจ ไม่ query ทุกข้อความ) → ถ้าไม่อัปเดตตรงนี้
+ *    คนที่ยืนอยู่ในฟาร์มเดียวกันจะเห็นชุดเก่าจนกว่าเราจะ reconnect
+ * ส่งเป็น village.join เพราะฝั่ง client ทำ upsert รายคนอยู่แล้ว (ไม่ต้องเพิ่ม event ใหม่)
+ */
+export function refreshFarmProfile(userId: number, profile: Profile): void {
+  if (!wss) return;
+  wss.clients.forEach((c) => {
+    const ws = c as Client;
+    if (ws.user?.id !== userId) return;
+    ws.profile = profile;
+    if (!ws.farmRooms?.size) return;
+    for (const id of ws.farmRooms) {
+      publishFarm(id, { t: 'village.join', systemId: id, peer: presenceOf(ws) }, ws);
+    }
+  });
+}
+
 /** ใครกำลังเดินอยู่ในฟาร์มนี้บ้าง (REST fallback ตอน WS ใช้ไม่ได้) */
 export function farmPresence(systemId: number): PresenceUser[] {
   const out: PresenceUser[] = [];
