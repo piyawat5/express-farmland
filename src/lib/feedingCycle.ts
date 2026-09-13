@@ -116,3 +116,53 @@ export function scoreFromTags(tags: string[]): number {
   if (little) return 35;
   return 0;
 }
+
+// ── อาหารของรอบ + ผลการกินแบบติ๊กทีเดียว (Phase 24, 2026-09-13) ──
+// รอบนึงให้อาหารชนิดเดียว (ดูข้อมูลจริง: เกือบทุกรอบมีแต่ป้ายปลา หรือแต่ป้ายหอย)
+// → รู้อาหารของรอบแล้ว ปูแต่ละตัวเหลือแค่ 3 สถานะ แล้วแปลงกลับเป็นป้ายชุดเดิม
+// เพื่อไม่ให้ Crab.feedingNote / ป้ายบนกล่อง / scoreFromTags / หลอดพลัง ต้องแก้ตาม
+
+export const FOOD_TYPES = ['FISH', 'SHELLFISH', 'MIXED'] as const;
+export type FoodType = (typeof FOOD_TYPES)[number];
+
+export const EAT_RESULTS = ['ATE', 'LITTLE', 'NONE'] as const;
+export type EatResult = (typeof EAT_RESULTS)[number];
+
+const FISH_TAGS = ['กินปลาปกติ', 'ไม่กินปลา'];
+const SHELL_TAGS = ['กินหอยปกติ', 'ไม่กินหอย'];
+
+/** ผลการกิน + อาหารของรอบ → ป้าย (MIXED = ได้ทั้งปลาและหอย) */
+export function tagsForResult(result: EatResult, food: FoodType): string[] {
+  if (result === 'LITTLE') return ['กินน้อย'];
+  const fish = food !== 'SHELLFISH';
+  const shell = food !== 'FISH';
+  if (result === 'ATE') return [...(fish ? ['กินปลาปกติ'] : []), ...(shell ? ['กินหอยปกติ'] : [])];
+  return [...(fish ? ['ไม่กินปลา'] : []), ...(shell ? ['ไม่กินหอย'] : [])];
+}
+
+/** ป้ายเดิม → ผลการกิน 3 สถานะ (ใช้ตอนเปลี่ยนอาหารของรอบย้อนหลัง) — กินอย่าง/ไม่กินอย่าง = กินน้อย */
+export function resultFromTags(tags: string[]): EatResult {
+  const score = scoreFromTags(tags);
+  if (score === 100) return 'ATE';
+  if (score === 0) return 'NONE';
+  return 'LITTLE';
+}
+
+/**
+ * อนุมานอาหารของรอบเก่า (ก่อนมีคอลัมน์ foodType) จากป้ายของทุกตัวในรอบ
+ * นับ "จำนวนตัว" ที่มีป้ายปลา/หอย — ฝั่งน้อยมีไม่ถึงครึ่งของฝั่งมาก = ถือว่ากดผิดไม่กี่ตัว
+ * (ข้อมูลจริง: ปลา 32 + หอย 3 = FISH, ปลา 26 + หอย 26 = MIXED)
+ */
+export function inferFoodType(tagLists: string[][]): FoodType | null {
+  let fish = 0;
+  let shell = 0;
+  for (const tags of tagLists) {
+    if (tags.some((t) => FISH_TAGS.includes(t))) fish++;
+    if (tags.some((t) => SHELL_TAGS.includes(t))) shell++;
+  }
+  if (!fish && !shell) return null;
+  const major = Math.max(fish, shell);
+  const minor = Math.min(fish, shell);
+  if (minor / major >= 0.5) return 'MIXED';
+  return fish > shell ? 'FISH' : 'SHELLFISH';
+}

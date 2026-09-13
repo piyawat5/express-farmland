@@ -131,7 +131,10 @@
 | GET | `/api/systems/:id/feeding-rounds?take&skip` | ประวัติรอบ + สถิติ (อ่านจากคอลัมน์ denormalize) |
 | GET | `/api/systems/:id/feeding-energy?rounds=5` | **หลอดพลัง** — คะแนนการกินเฉลี่ย N รอบล่าสุดต่อปู |
 | GET | `/api/feeding-rounds/:id` | snapshot รอบ |
-| POST | `/api/feeding-rounds/:id/entries` | **บันทึกการกินปู 1 ตัว** — body `{ crabId*, tags[]*, note? }` → `{ round, celebrated }` |
+| POST | `/api/feeding-rounds/:id/entries` | **บันทึกการกินปู 1 ตัว** — body `{ crabId*, tags[]?, result?('ATE'\|'LITTLE'\|'NONE'), note? }` (ต้องมี `tags` หรือ `result`) → `{ round, celebrated }` |
+| POST | `/api/feeding-rounds/:id/entries/bulk` | **หลายตัวทีเดียว** (กินหมดทั้งกล่อง) — body `{ entries:[{ crabId, tags?\|result?, note? }] }` (1–50) → `{ round, celebrated }` · 1 ทรานแซกชัน + ส่ง WS ครั้งเดียว |
+| PATCH | `/api/feeding-rounds/:id/food` | **อาหารของรอบ** — body `{ foodType?('FISH'\|'SHELLFISH'\|'MIXED'\|null), foodGrams?(int\|null) }` → `RoundProgress`; รอบที่ปิดแล้วก็แก้ได้ (ส่ง WS เฉพาะรอบ `OPEN`) |
+| GET | `/api/systems/:id/feeding-analysis?from&to` | **วิเคราะห์อาหาร** (`from/to` = `YYYY-MM-DD`) — ดูหัวข้อด้านล่าง |
 | DELETE | `/api/feeding-rounds/:id/entries/:crabId` | ยกเลิกการบันทึกของปูตัวนั้น |
 | POST | `/api/feeding-rounds/:id/close` | ปิดรอบทั้งที่ยังบันทึกไม่ครบ |
 | POST | `/api/feeding-rounds/:id/skip` | ข้ามรอบ (ไม่ได้ให้อาหารวันนั้น) |
@@ -139,11 +142,18 @@
 - **วงรอบ:** `onDays/offDays` = "ให้ N วัน เว้น M วัน" — วันเว้นวัน=`1/1` · 2เว้น1=`2/1` · 3เว้น1=`3/1` · 2เว้น2=`2/2` · ทุกวัน=`1/0`. คำนวณจาก `anchorDate` (`src/lib/feedingCycle.ts`) เพราะ **cron เขียนแบบนี้ไม่ได้** (คาบไม่หารลงตัวกับเดือน)
 - **ตั้งใจแยกจาก `ReminderRule`**: ถ้าผูกกัน การกด "ทำเสร็จแล้ว" จะ recompute `nextRunAt` ด้วย `minAdvance` → วงรอบหลุด anchor. รอบนี้สร้าง `Task` ตรง ๆ (`ruleId=null`, `linkType:'FeedingRound'`) จึงได้เมลสรุป/หน้างาน/ปฏิทินครบเหมือนเดิม
 - **Task 2 ใบต่อรอบ:** `FEEDING` ที่ `dueAt` + `SCRAP_COLLECT` ที่ `dueAt + recordLeadHours` (ผู้ใช้เดินเก็บเศษแล้วค่อยไล่บันทึก) — ปิดอัตโนมัติเมื่อบันทึกครบ
-- **`RoundProgress`** = `{ id, systemId, planId, feedDate("YYYY-MM-DD"), dueAt, recordDueAt, status, startedAt, completedAt, total, recorded, remaining, boxes[], crabs[], stats }`
+- **`RoundProgress`** = `{ id, systemId, planId, feedDate("YYYY-MM-DD"), dueAt, recordDueAt, status, startedAt, completedAt, foodType, foodGrams, total, recorded, remaining, boxes[], crabs[], stats }`
   - `boxes[]` = `{ boxId, code, label, total, recorded, done }` → ใช้ทำ**ป้ายบนกล่อง** (หายเมื่อ `done`)
   - `crabs[]` = `{ crabId, code, boxId, boxCode, cableTieColor, recorded, tags[], note, score, recordedAt, recordedByUserId, recordedByName }`
-  - `stats` = `{ elapsedSec, normalCount, lowCount, noneCount, avgScore, recordedCount, expectedCount }`
-- **คะแนนการกิน (`score`)**: กินปลาปกติ+กินหอยปกติ=100 · อย่างใดอย่างหนึ่ง=65 · กินน้อย=35 · ไม่กินเลย=0
+  - `stats` = `{ normalCount, lowCount, noneCount, avgScore, recordedCount, expectedCount }` — **`elapsedSec` ถูกตัดออกแล้ว** (2026-09-13 ผู้ใช้ให้เลิกจับเวลา; คอลัมน์ใน DB ยังอยู่แต่ไม่เขียน)
+- **คะแนนการกิน (`score`)**: กินครบทุกอย่างที่ให้=100 · ให้ 2 ชนิดแต่ปฏิเสธไปอย่าง=65 · กินน้อย=35 · ไม่กินเลย=0
+- **`result` → ป้าย** (ต้องเลือก `foodType` ของรอบก่อน ไม่งั้น 400): `ATE`→`กินปลาปกติ`/`กินหอยปกติ` (MIXED ได้ทั้งคู่) · `LITTLE`→`กินน้อย` · `NONE`→`ไม่กินปลา`/`ไม่กินหอย` — ป้ายชุดเดิมจึงไม่ต้องแก้ `feedingNote`/ป้ายบนกล่อง/หลอดพลัง
+- **เปลี่ยน `foodType` หลังบันทึกแล้ว** → แปลงป้ายของทุกตัวในรอบให้ตรงอาหารใหม่โดยคงผลเดิม (อัปเดต entry + `CrabHistory` แถวเดิม + `Crab.feedingNote` ถ้ารอบนั้นยังเป็นมื้อล่าสุด) + คำนวณ `avgScore/normalCount` ใหม่ถ้ารอบปิดแล้ว
+- **`feeding-analysis`** คืน `{ range, settings:{minIntervalDays, majorityShare}, totals:{FISH\|SHELLFISH\|MIXED\|UNKNOWN: {rounds, roundsWithGrams, grams, entries, ate, little, none, avgScore}}, byWeek[{week, FISH:{rounds,grams}, ...}], growth:{EGG\|MEAT: {FISH\|SHELLFISH\|MIXED: {intervals, crabs, avgDays, pctSamples, avgPctPerWeek, medianPctPerWeek, weightSamples, avgWeightPerWeek, gramsSamples, gramsPerPct}}}, rounds[], intervals[] }` — อ่านอย่างเดียว
+  - รอบที่ `foodType=null` → **อนุมานจากป้าย** (`rounds[].inferred=true`): ฝั่งน้อยไม่ถึงครึ่งของฝั่งมาก = ถือว่ากดผิด, ใกล้กัน = `MIXED`
+  - **การเติบโต** = รอบวัดโซน `MEASURE` ที่ติดกันของปูแต่ละตัว (ห่าง ≥3 วัน, วันเดียวกันเก็บค่าสุดท้าย, ตัดช่วงก่อนมีรอบให้อาหาร) × มื้อที่ตัวนั้นกินจริงในช่วง `[วันวัดแรก, วันวัดถัดไป)` ถ่วงด้วย `score/100` → กินปลา ≥70% = กลุ่ม `FISH`, ≤30% = `SHELLFISH`, นอกนั้น `MIXED`
+  - วันที่ของรอบวัด = `snapshot.lastCheckedAt` ถ้าผู้ใช้แก้จริง (ไม่ซ้ำกับแถวก่อน และไม่เกินเวลาบันทึก +1 วัน) ไม่งั้นใช้ `recordedAt`
+  - `intervals[].grams` = กรัมทั้งรอบ ÷ จำนวนตัวที่บันทึก รวมทุกมื้อในช่วง (null ถ้ามีรอบไหนไม่ได้กรอกกรัม)
 - **`POST /entries` ไม่ regress ของเดิม** — เขียน `Crab.feedingNote` (`tags.join(', ')`) + `Crab.lastFedAt` (= `round.dueAt` ไม่ใช่เวลาที่กดบันทึก) + `CrabHistory` โซน `FEEDING` (คีย์ `feedingNote`/`fedAt` เหมือนเดิม); **บันทึกซ้ำตัวเดิม = อัปเดตแถวประวัติเดิม ไม่สร้างซ้ำ**
 - **concurrency:** `@@unique([roundId,crabId])` → 2 คนกดปูตัวเดียวกันพร้อมกันได้แถวเดียว; ปิดรอบด้วย conditional update → `celebrated=true` เกิดขึ้น**ครั้งเดียว**เสมอ
 - **`total` นับสด** จากปูจริงในระบบ (`deletedAt=null`, status `FATTENING|READY`) ไม่ใช่ `expectedCount` ที่เก็บไว้ — ปูขาย/เพิ่มกลางรอบแล้วตัวเลขขยับได้ FE ห้าม cache

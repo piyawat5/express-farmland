@@ -6,6 +6,8 @@ import { serialize } from '../lib/serialize';
 import { idParam } from '../lib/validation';
 import { requireSystemEdit, systemIdFromParam, systemIdFromFeedingRound } from '../middleware/auth';
 import * as svc from '../services/feeding.service';
+import { feedingAnalysis } from '../services/feedingAnalysis.service';
+import { EAT_RESULTS, FOOD_TYPES } from '../lib/feedingCycle';
 
 // ════════════════════════════════════════════════════════════════════
 //  โมดูล B2 — แผนให้อาหาร + รอบให้อาหาร (Phase 21)
@@ -24,11 +26,27 @@ const feedingPlanBody = z.object({
   note: z.string().max(500).nullable().optional(),
 });
 
-const entryBody = z.object({
-  crabId: z.number().int().positive(),
-  tags: z.array(z.string().min(1).max(60)).max(10),
-  note: z.string().max(500).nullable().optional(),
-});
+// ส่ง tags (ทางเดิมจาก popup ปู) หรือ result (ติ๊กทีเดียว — แปลงเป็นป้ายจากอาหารของรอบ) อย่างใดอย่างหนึ่ง
+const entryItem = z
+  .object({
+    crabId: z.number().int().positive(),
+    tags: z.array(z.string().min(1).max(60)).max(10).optional(),
+    result: z.enum(EAT_RESULTS).optional(),
+    note: z.string().max(500).nullable().optional(),
+  })
+  .refine((v) => v.tags != null || v.result != null, 'ต้องส่ง tags หรือ result');
+
+const bulkEntryBody = z.object({ entries: z.array(entryItem).min(1).max(50) });
+
+const foodBody = z
+  .object({
+    foodType: z.enum(FOOD_TYPES).nullable().optional(),
+    foodGrams: z.number().int().min(0).max(1_000_000).nullable().optional(),
+  })
+  .refine((v) => v.foodType !== undefined || v.foodGrams !== undefined, 'ต้องส่ง foodType หรือ foodGrams');
+
+const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'รูปแบบวันที่ต้องเป็น YYYY-MM-DD');
+const analysisQuery = z.object({ from: ymd.optional(), to: ymd.optional() });
 
 const energyQuery = z.object({
   rounds: z.coerce.number().int().min(1).max(20).default(5),
@@ -113,6 +131,16 @@ feedingSystemRouter.get(
   }),
 );
 
+/** วิเคราะห์อาหาร — ให้ปลา/หอยไปเท่าไร + %ไข่ที่เพิ่มต่อสัปดาห์เมื่อกินปลา vs หอย */
+feedingSystemRouter.get(
+  '/:id/feeding-analysis',
+  validate({ params: idParam, query: analysisQuery }),
+  asyncHandler(async (req, res) => {
+    const q = req.query as unknown as z.infer<typeof analysisQuery>;
+    res.json(serialize(await feedingAnalysis(Number(req.params.id), req.user!, q)));
+  }),
+);
+
 // ── /feeding-rounds/:id ───────────────────────────────────────────────
 export const feedingRoundRouter = Router();
 
@@ -127,10 +155,31 @@ feedingRoundRouter.get(
 /** บันทึกการกินของปู 1 ตัว — คืน snapshot รอบเต็ม + celebrated (ตัวสุดท้ายหรือยัง) */
 feedingRoundRouter.post(
   '/:id/entries',
-  validate({ params: idParam, body: entryBody }),
+  validate({ params: idParam, body: entryItem }),
   requireSystemEdit(systemIdFromFeedingRound),
   asyncHandler(async (req, res) => {
     res.json(serialize(await svc.recordEntry(Number(req.params.id), req.user!, req.body)));
+  }),
+);
+
+/** บันทึกหลายตัวทีเดียว (กินหมดทั้งกล่อง) — 1 ทรานแซกชัน, ส่ง WS ครั้งเดียว */
+feedingRoundRouter.post(
+  '/:id/entries/bulk',
+  validate({ params: idParam, body: bulkEntryBody }),
+  requireSystemEdit(systemIdFromFeedingRound),
+  asyncHandler(async (req, res) => {
+    const { entries } = req.body as z.infer<typeof bulkEntryBody>;
+    res.json(serialize(await svc.recordEntries(Number(req.params.id), req.user!, entries)));
+  }),
+);
+
+/** ตั้งอาหารของรอบ (ปลา/หอย/ผสม) + กรัม — รอบเก่าก็แก้ได้ (กรอกย้อนหลังจากหน้าวิเคราะห์) */
+feedingRoundRouter.patch(
+  '/:id/food',
+  validate({ params: idParam, body: foodBody }),
+  requireSystemEdit(systemIdFromFeedingRound),
+  asyncHandler(async (req, res) => {
+    res.json(serialize(await svc.setRoundFood(Number(req.params.id), req.user!, req.body)));
   }),
 );
 

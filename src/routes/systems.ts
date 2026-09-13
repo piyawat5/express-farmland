@@ -60,8 +60,10 @@ const systemBody = z.object({
             label: z.string().max(40), // ชื่อเรท เช่น L / 3-4 ตัวโล
             minG: z.number().nonnegative(), // น้ำหนักต่ำสุดของเรท (กรัม)
             maxG: z.number().nonnegative(), // น้ำหนักสูงสุดของเรท (กรัม)
-            pricePerKilo: z.number().nonnegative(), // ราคา/กก. ของเรท
-            divisorG: z.number().positive(), // ตัวหารสูตรราคาตลาด (max กรัมของเรท เช่น 333)
+            // A = จำนวนตัว/กก. (ใช้ตัวที่ใหญ่กว่า เช่น "3-4 ตัวโล" ใส่ 3) — optional เพื่อรองรับ tier เก่าที่บันทึกก่อนมีคอลัมน์นี้
+            perKilo: z.number().positive().nullable().optional(),
+            pricePerKilo: z.number().nonnegative(), // C = ราคาของเรท
+            divisorG: z.number().positive(), // B = ค่าเฉลี่ยจำนวน ≈ 1000 ÷ A (เช่น A=3 → 333)
           }),
         )
         .nullable()

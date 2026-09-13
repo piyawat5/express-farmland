@@ -347,13 +347,15 @@ model FeedingRound {
   dueAt         DateTime // เวลาให้อาหารจริงของรอบนี้ (feedDate + timeOfDay)
   recordDueAt   DateTime // เวลาที่ต้องเดินเก็บเศษ + บันทึกการกิน
   status        FeedingRoundStatus @default(OPEN)
-  startedAt     DateTime? // เวลาบันทึกปูตัวแรก (ใช้คิดเวลาที่ใช้ทั้งรอบ)
+  startedAt     DateTime? // เวลาบันทึกปูตัวแรก (หลอดพลังใช้แยกรอบที่มีบันทึกจริง)
   completedAt   DateTime? // เวลาบันทึกปูตัวสุดท้าย = ปิดรอบ
   expectedCount Int                @default(0) // จำนวนปูที่ต้องบันทึก (snapshot ตอนเปิดรอบ)
   recordedCount Int                @default(0) // สรุปตอนปิดรอบ
   normalCount   Int                @default(0) // "กินปกติ" (score = 100) กี่ตัว
   avgScore      Float? // คะแนนเฉลี่ยของรอบ 0–100
-  elapsedSec    Int? // startedAt → completedAt (วินาที) — โชว์ในป๊อปอัพฉลอง
+  elapsedSec    Int? // ⚠️ เลิกใช้ (2026-09-13 ผู้ใช้ให้ตัดการจับเวลาออก) — ไม่เขียนแล้ว คงคอลัมน์ไว้ไม่ให้ข้อมูลเก่าหาย
+  foodType      String?            @db.VarChar(16) // อาหารของรอบนี้: FISH | SHELLFISH | MIXED (null = ยังไม่เลือก → วิเคราะห์อนุมานจากป้าย)
+  foodGrams     Int? // ปริมาณอาหารรวมที่ให้ทั้งระบบในรอบนี้ (กรัม) — optional กรอกทีหลังได้
   feedingTaskId Int? // Task FEEDING ของรอบนี้
   scrapTaskId   Int? // Task SCRAP_COLLECT (เก็บเศษ + บันทึกการกิน)
   createdAt     DateTime           @default(now())

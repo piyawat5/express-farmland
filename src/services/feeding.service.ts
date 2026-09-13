@@ -10,8 +10,12 @@ import {
   isFeedDay,
   nextFeedRunAt,
   previewFeedDays,
+  resultFromTags,
   scoreFromTags,
+  tagsForResult,
   ymdLocal,
+  type EatResult,
+  type FoodType,
 } from '../lib/feedingCycle';
 
 // ════════════════════════════════════════════════════════════════════
@@ -307,13 +311,14 @@ export async function buildRoundProgress(round: FeedingRound) {
     status: round.status,
     startedAt: round.startedAt?.toISOString() ?? null,
     completedAt: round.completedAt?.toISOString() ?? null,
+    foodType: round.foodType as FoodType | null,
+    foodGrams: round.foodGrams,
     total,
     recorded,
     remaining: Math.max(0, total - recorded),
     boxes: [...boxMap.values()].map((b) => ({ ...b, done: b.recorded >= b.total })),
     crabs: crabRows,
     stats: {
-      elapsedSec: round.elapsedSec,
       normalCount: scored.filter((s) => s === 100).length,
       lowCount: scored.filter((s) => s > 0 && s < 100).length,
       noneCount: scored.filter((s) => s === 0).length,
@@ -368,16 +373,12 @@ export async function openRoundManually(systemId: number, user: AuthUser, at?: D
 async function evaluateAndMaybeComplete(round: FeedingRound, progress: RoundProgress): Promise<boolean> {
   if (round.status !== 'OPEN' || progress.total === 0 || progress.remaining > 0) return false;
   const now = new Date();
-  const elapsedSec = round.startedAt
-    ? Math.max(0, Math.round((now.getTime() - round.startedAt.getTime()) / 1000))
-    : null;
 
   const res = await prisma.feedingRound.updateMany({
     where: { id: round.id, status: 'OPEN' },
     data: {
       status: 'COMPLETED',
       completedAt: now,
-      elapsedSec,
       expectedCount: progress.total,
       recordedCount: progress.recorded,
       normalCount: progress.stats.normalCount,
@@ -423,94 +424,67 @@ export async function getRound(roundId: number, user: AuthUser) {
   return buildRoundProgress(round);
 }
 
+export type EntryInput = {
+  crabId: number;
+  /** ป้ายตรงๆ (ทางเดิมจาก popup ปู) */
+  tags?: string[];
+  /** ผลการกินแบบติ๊กทีเดียว — แปลงเป็นป้ายจากอาหารของรอบ (ต้องเลือกอาหารของรอบก่อน) */
+  result?: EatResult;
+  note?: string | null;
+};
+
 /**
  * บันทึกการกินของปู 1 ตัวในรอบนี้ — หัวใจของฟีเจอร์
  * ทำทุกอย่างที่ crab.service.logFeeding ทำ (feedingNote + lastFedAt + CrabHistory โซน FEEDING)
  * บวกกับ FeedingEntry เพื่อรู้ว่า "รอบนี้บันทึกไปกี่ตัวแล้ว"
  */
-export async function recordEntry(
-  roundId: number,
-  user: AuthUser,
-  input: { crabId: number; tags: string[]; note?: string | null },
-) {
+export async function recordEntry(roundId: number, user: AuthUser, input: EntryInput) {
+  return recordEntries(roundId, user, [input]);
+}
+
+/**
+ * บันทึกหลายตัวในคำขอเดียว ("กินหมดทั้งกล่อง") — 1 ทรานแซกชัน + นับความคืบหน้า/ส่ง WS ครั้งเดียว
+ * (ถ้ายิงทีละตัว อีกเครื่องจะเห็นตัวนับกระตุกทีละขั้น + ป้ายกล่องค้างครึ่งๆ กลางๆ)
+ */
+export async function recordEntries(roundId: number, user: AuthUser, items: EntryInput[]) {
   const round = await loadRound(roundId);
   assertOwnership(user, round.system.ownerId);
   if (round.status === 'SKIPPED') throw badRequest('รอบนี้ถูกข้ามไปแล้ว');
+  if (!items.length) throw badRequest('ไม่มีปูที่จะบันทึก');
 
-  const crab = await prisma.crab.findUnique({
-    where: { id: input.crabId },
+  const crabs = await prisma.crab.findMany({
+    where: { id: { in: [...new Set(items.map((i) => i.crabId))] } },
     select: { id: true, systemId: true, boxId: true, deletedAt: true },
   });
-  if (!crab || crab.deletedAt) throw notFound('ไม่พบปูตัวนี้');
-  if (crab.systemId !== round.systemId) throw badRequest('ปูตัวนี้ไม่ได้อยู่ในระบบเดียวกับรอบให้อาหาร');
+  const crabById = new Map(crabs.map((c) => [c.id, c]));
+  const food = round.foodType as FoodType | null;
 
-  const tags = [...new Set(input.tags.map((t) => t.trim()).filter(Boolean))];
-  const score = scoreFromTags(tags);
-  const feedingNote = tags.length ? tags.join(', ') : null; // รูปแบบเดียวกับที่หน้าเว็บเขียนอยู่
-  const now = new Date();
-
-  await prisma.$transaction(async (tx) => {
-    const existing = await tx.feedingEntry.findUnique({
-      where: { roundId_crabId: { roundId, crabId: crab.id } },
-    });
-
-    // ประวัติโซน FEEDING — คีย์ feedingNote/fedAt ต้องคงไว้ (หน้าเว็บอ่านอยู่)
-    // fedAt = เวลาให้อาหารจริง (ไม่ใช่เวลาที่เดินมาบันทึก ซึ่งช้ากว่า 2–3 ชม.)
-    const snapshot = {
-      feedingNote,
-      fedAt: round.dueAt.toISOString(),
-      roundId,
-      score,
-      tags,
-    } satisfies Prisma.InputJsonObject;
-
-    // แก้ซ้ำ (กดผิดตัว/เปลี่ยนใจ) → อัปเดตแถวประวัติเดิม ไม่สร้างซ้ำ
-    // ใช้ updateMany เพราะไม่ throw ตอนแถวถูกลบไปแล้ว (update จะโยน P2025 กลางทรานแซกชัน)
-    let historyId = existing?.historyId ?? null;
-    if (historyId) {
-      const res = await tx.crabHistory.updateMany({ where: { id: historyId }, data: { snapshot } });
-      if (res.count === 0) historyId = null; // ผู้ใช้ลบประวัติแถวนั้นทิ้งไปแล้ว → สร้างใหม่
+  const rows = items.map((input) => {
+    const crab = crabById.get(input.crabId);
+    if (!crab || crab.deletedAt) throw notFound('ไม่พบปูตัวนี้');
+    if (crab.systemId !== round.systemId) throw badRequest('ปูตัวนี้ไม่ได้อยู่ในระบบเดียวกับรอบให้อาหาร');
+    let tags: string[];
+    if (input.result) {
+      if (!food) throw badRequest('เลือกก่อนว่ารอบนี้ให้ปลาหรือหอย');
+      tags = tagsForResult(input.result, food);
+    } else {
+      tags = [...new Set((input.tags ?? []).map((t) => t.trim()).filter(Boolean))];
     }
-    if (historyId == null) {
-      historyId = (await tx.crabHistory.create({ data: { crabId: crab.id, zone: 'FEEDING', snapshot } })).id;
-    }
-
-    await tx.crab.update({
-      where: { id: crab.id },
-      data: { feedingNote, lastFedAt: round.dueAt },
-    });
-
-    const payload = {
-      tags: tags as unknown as Prisma.InputJsonValue,
-      note: input.note ?? null,
-      score,
-      boxId: crab.boxId,
-      recordedByUserId: user.id,
-      recordedAt: now,
-      historyId,
-    };
-    try {
-      await tx.feedingEntry.upsert({
-        where: { roundId_crabId: { roundId, crabId: crab.id } },
-        create: { roundId, crabId: crab.id, ...payload },
-        update: payload,
-      });
-    } catch (e) {
-      // upsert ของ Prisma = SELECT-then-INSERT → 2 เครื่องกดปูตัวเดียวกันพร้อมกันยังชนได้
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-        await tx.feedingEntry.update({
-          where: { roundId_crabId: { roundId, crabId: crab.id } },
-          data: payload,
-        });
-      } else throw e;
-    }
-
-    // จับเวลาเริ่มรอบที่ปูตัวแรก (เขียนครั้งเดียว — guard ด้วย startedAt: null)
-    await tx.feedingRound.updateMany({
-      where: { id: roundId, startedAt: null },
-      data: { startedAt: now },
-    });
+    return { crab, tags, note: input.note ?? null };
   });
+
+  const now = new Date();
+  await prisma.$transaction(
+    async (tx) => {
+      for (const row of rows) await writeEntry(tx, round, row, user.id, now);
+      // เวลาบันทึกตัวแรก (เขียนครั้งเดียว) — หลอดพลังใช้แยกรอบที่มีบันทึกจริง ไม่ได้ใช้จับเวลาแล้ว
+      await tx.feedingRound.updateMany({
+        where: { id: roundId, startedAt: null },
+        data: { startedAt: now },
+      });
+    },
+    { timeout: 20_000 }, // DB อยู่ remote — ทั้งกล่องหลายตัวอาจเกินดีฟอลต์ 5 วิ
+  );
 
   // นับความคืบหน้า "นอก" transaction — ไม่งั้นอ่านไม่เห็นแถวที่อีกเครื่องเพิ่ง commit
   const fresh = await prisma.feedingRound.findUniqueOrThrow({ where: { id: roundId } });
@@ -518,6 +492,160 @@ export async function recordEntry(
   const celebrated = await evaluateAndMaybeComplete(fresh, progress);
   const finalRound = await refreshAndPublish(roundId, celebrated);
   return { round: finalRound, celebrated };
+}
+
+async function writeEntry(
+  tx: Prisma.TransactionClient,
+  round: FeedingRound,
+  row: { crab: { id: number; boxId: number | null }; tags: string[]; note: string | null },
+  userId: number,
+  now: Date,
+) {
+  const { crab, tags } = row;
+  const roundId = round.id;
+  const score = scoreFromTags(tags);
+  const feedingNote = tags.length ? tags.join(', ') : null; // รูปแบบเดียวกับที่หน้าเว็บเขียนอยู่
+
+  const existing = await tx.feedingEntry.findUnique({
+    where: { roundId_crabId: { roundId, crabId: crab.id } },
+  });
+
+  // ประวัติโซน FEEDING — คีย์ feedingNote/fedAt ต้องคงไว้ (หน้าเว็บอ่านอยู่)
+  const snapshot = historySnapshot(round, tags, score);
+
+  // แก้ซ้ำ (กดผิดตัว/เปลี่ยนใจ) → อัปเดตแถวประวัติเดิม ไม่สร้างซ้ำ
+  // ใช้ updateMany เพราะไม่ throw ตอนแถวถูกลบไปแล้ว (update จะโยน P2025 กลางทรานแซกชัน)
+  let historyId = existing?.historyId ?? null;
+  if (historyId) {
+    const res = await tx.crabHistory.updateMany({ where: { id: historyId }, data: { snapshot } });
+    if (res.count === 0) historyId = null; // ผู้ใช้ลบประวัติแถวนั้นทิ้งไปแล้ว → สร้างใหม่
+  }
+  if (historyId == null) {
+    historyId = (await tx.crabHistory.create({ data: { crabId: crab.id, zone: 'FEEDING', snapshot } })).id;
+  }
+
+  await tx.crab.update({
+    where: { id: crab.id },
+    data: { feedingNote, lastFedAt: round.dueAt },
+  });
+
+  const payload = {
+    tags: tags as unknown as Prisma.InputJsonValue,
+    note: row.note,
+    score,
+    boxId: crab.boxId,
+    recordedByUserId: userId,
+    recordedAt: now,
+    historyId,
+  };
+  try {
+    await tx.feedingEntry.upsert({
+      where: { roundId_crabId: { roundId, crabId: crab.id } },
+      create: { roundId, crabId: crab.id, ...payload },
+      update: payload,
+    });
+  } catch (e) {
+    // upsert ของ Prisma = SELECT-then-INSERT → 2 เครื่องกดปูตัวเดียวกันพร้อมกันยังชนได้
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      await tx.feedingEntry.update({
+        where: { roundId_crabId: { roundId, crabId: crab.id } },
+        data: payload,
+      });
+    } else throw e;
+  }
+}
+
+/** snapshot ประวัติโซน FEEDING — fedAt = เวลาให้อาหารจริง (ไม่ใช่เวลาที่เดินมาบันทึก ซึ่งช้ากว่า 2–3 ชม.) */
+function historySnapshot(round: FeedingRound, tags: string[], score: number) {
+  return {
+    feedingNote: tags.length ? tags.join(', ') : null,
+    fedAt: round.dueAt.toISOString(),
+    roundId: round.id,
+    score,
+    tags,
+  } satisfies Prisma.InputJsonObject;
+}
+
+// ────────────────────── อาหารของรอบ (ปลา/หอย + กรัม) ──────────────────────
+
+/**
+ * ตั้งอาหาร/ปริมาณของรอบ — ทำได้ทั้งรอบที่เปิดอยู่และรอบเก่า (กรอกย้อนหลังจากหน้าวิเคราะห์)
+ * เปลี่ยนชนิดอาหารหลังบันทึกไปแล้ว (กดผิด) → แปลงป้ายของทุกตัวในรอบให้ตรงอาหารใหม่
+ * โดยคงผลการกินเดิมไว้ ไม่งั้นป้ายบนกล่องจะขึ้น 🐟✓ ทั้งที่รอบนั้นให้หอย
+ */
+export async function setRoundFood(
+  roundId: number,
+  user: AuthUser,
+  input: { foodType?: FoodType | null; foodGrams?: number | null },
+) {
+  const round = await loadRound(roundId);
+  assertOwnership(user, round.system.ownerId);
+
+  const nextType = input.foodType === undefined ? round.foodType : input.foodType;
+  const retag = nextType != null && nextType !== round.foodType;
+
+  await prisma.$transaction(
+    async (tx) => {
+      await tx.feedingRound.update({
+        where: { id: roundId },
+        data: {
+          ...(input.foodType !== undefined ? { foodType: input.foodType } : {}),
+          ...(input.foodGrams !== undefined ? { foodGrams: input.foodGrams } : {}),
+        },
+      });
+      if (retag) await retagEntries(tx, round, nextType as FoodType);
+    },
+    { timeout: 30_000 },
+  );
+
+  const fresh = await prisma.feedingRound.findUniqueOrThrow({ where: { id: roundId } });
+  // ส่ง WS เฉพาะรอบที่เปิดอยู่ — รอบเก่าที่ปิดแล้วถ้าส่งไป หน้ากล่องปูของอีกเครื่อง
+  // จะเอารอบเก่ามาแทนรอบปัจจุบัน + เด้งพลุฉลองรอบนั้นซ้ำ
+  if (fresh.status === 'OPEN') return refreshAndPublish(roundId, false);
+  return buildRoundProgress(fresh);
+}
+
+async function retagEntries(tx: Prisma.TransactionClient, round: FeedingRound, food: FoodType) {
+  const entries = await tx.feedingEntry.findMany({
+    where: { roundId: round.id },
+    select: { id: true, crabId: true, tags: true, historyId: true },
+  });
+  let changed = false;
+  for (const e of entries) {
+    const oldTags = (e.tags as string[] | null) ?? [];
+    const tags = tagsForResult(resultFromTags(oldTags), food);
+    if (tags.length === oldTags.length && tags.every((t) => oldTags.includes(t))) continue;
+    changed = true;
+    const score = scoreFromTags(tags);
+    await tx.feedingEntry.update({
+      where: { id: e.id },
+      data: { tags: tags as unknown as Prisma.InputJsonValue, score },
+    });
+    if (e.historyId) {
+      await tx.crabHistory.updateMany({
+        where: { id: e.historyId },
+        data: { snapshot: historySnapshot(round, tags, score) },
+      });
+    }
+    // โน้ตการกินล่าสุดของปู — แก้เฉพาะเมื่อรอบนี้ยังเป็นมื้อล่าสุดของตัวนั้นอยู่
+    await tx.crab.updateMany({
+      where: { id: e.crabId, lastFedAt: round.dueAt },
+      data: { feedingNote: tags.join(', ') },
+    });
+  }
+  // รอบที่ปิดไปแล้วเก็บสถิติแบบ denormalize ไว้ → คะแนนเปลี่ยนต้องคำนวณใหม่
+  if (changed && round.status === 'COMPLETED') {
+    const scores = await tx.feedingEntry.findMany({ where: { roundId: round.id }, select: { score: true } });
+    await tx.feedingRound.update({
+      where: { id: round.id },
+      data: {
+        normalCount: scores.filter((s) => s.score === 100).length,
+        avgScore: scores.length
+          ? Math.round((scores.reduce((a, s) => a + s.score, 0) / scores.length) * 10) / 10
+          : null,
+      },
+    });
+  }
 }
 
 /** ลบการบันทึกของปู 1 ตัว (บันทึกผิดตัว) */
@@ -541,7 +669,6 @@ export async function closeRound(roundId: number, user: AuthUser) {
     data: {
       status: 'COMPLETED',
       completedAt: now,
-      elapsedSec: round.startedAt ? Math.max(0, Math.round((now.getTime() - round.startedAt.getTime()) / 1000)) : null,
       expectedCount: progress.total,
       recordedCount: progress.recorded,
       normalCount: progress.stats.normalCount,

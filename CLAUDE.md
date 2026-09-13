@@ -4,6 +4,56 @@
 > อัปเดตทุกครั้งที่มี decision สำคัญ / สร้าง module ใหม่ / เปลี่ยน schema
 
 ## 👉 ทำต่อจากตรงนี้ (NEXT — session ใหม่อ่านตรงนี้ก่อน)
+### 🍤 ติ๊กการกินทีเดียว + ตัดจับเวลา + หน้าวิเคราะห์อาหาร ปลา vs หอย (2026-09-13) — BE tsc + FE `vue-tsc`+`vite build` ผ่าน, ✅ migration apply แล้ว, ✅ สโมคเทส service 14 ข้อผ่าน (ลบ user/ระบบทดสอบแล้ว)
+- ⚠️ **ยังไม่ทดสอบบนเบราว์เซอร์จริง** — รอผู้ใช้เทส: เลือกอาหารของรอบ → แตะกล่องปูตัวเดียว (ต้องขึ้น ✓ เขียวทันที), แตะซ้ำแก้เป็นกินน้อย/ไม่กิน, เปลี่ยนอาหารกลางรอบ, หน้า "วิเคราะห์อาหาร" (กราฟรายสัปดาห์ + ตารางกรอกกรัมย้อนหลัง) ทั้งมือถือและ dark mode
+- **migration `phase24_feeding_food`** (19 migrations): `FeedingRound.foodType VARCHAR(16)?` (`FISH|SHELLFISH|MIXED` — String ไม่ใช่ enum ตาม precedent `kind`) + `foodGrams Int?` (กรัมรวมทั้งระบบ)
+- **ข้อ 1.1 ตัดจับเวลา:** เลิกเขียน `elapsedSec` (คอลัมน์คงไว้ ไม่ drop ข้อมูลเก่า) + เอาออกจาก `stats` + การ์ด "ใช้เวลาทั้งหมด" ในพลุ → เปลี่ยนเป็นโชว์อาหารของรอบ; **`startedAt` ยังเขียนอยู่** เพราะ `crabEnergy` ใช้แยกรอบที่มีบันทึกจริง
+- **ข้อ 1.2 ติ๊กทีเดียว — ทิศทางที่เลือก:** อาหารเป็นของ "รอบ" ไม่ใช่ของปู (ข้อมูลจริง: เกือบทุกรอบมีแต่ป้ายปลา หรือแต่ป้ายหอย) → ปูแต่ละตัวเหลือ 3 สถานะ `ATE/LITTLE/NONE` แล้ว **server แปลงกลับเป็นป้ายชุดเดิม** (`tagsForResult` ใน `lib/feedingCycle.ts`) → `feedingNote`/ป้ายบนกล่อง/`scoreFromTags`/หลอดพลัง **ไม่ต้องแก้เลย**
+  - ตอนทำ **ปูมีชีวิต 71 ตัว = 1 กล่อง 1 ตัวทั้งหมด** → แตะกล่องปูตัวเดียว = กินหมดทันที (1 แตะ); กล่องหลายตัว/แตะกล่องที่บันทึกแล้ว → `FeedingQuickSheet.vue` (ปุ่มใหญ่ต่อตัว + "กินหมดทั้งกล่อง" + ล้าง + รายละเอียดปู)
+  - ยังไม่เลือกอาหารของรอบ → แตะกล่องแรกเด้ง `FeedingFoodDialog.vue` เลือกแล้ว**บันทึกกล่องที่แตะค้างไว้ต่อให้เลย**; สวิตช์ "แตะกล่อง = บันทึกการกิน" ในแถบรอบ (จำใน localStorage `farmland.quickFeed`) ปิดแล้วกลับไปเปิด popup ปูแบบเดิม
+  - ⚠️ **FE ยิงคำขอเรียงคิวทีละอัน (`feedQueue`) ไม่ยิงขนาน** — ถ้าขนาน คำตอบที่มาช้า (snapshot เก่า) จะทับของใหม่ แล้วกล่องที่เพิ่งติ๊กเด้งกลับเป็นยังไม่บันทึก; ผลที่แตะแล้วโชว์ทันทีผ่าน `pendingResults` + `pendingSeq` (แตะตัวเดิมซ้ำระหว่างรอ → ไม่ลบ pending ของคำขอใหม่)
+  - BE: `recordEntries` (หลายตัว 1 ทรานแซกชัน, timeout 20 วิ เพราะ DB remote) + `POST /feeding-rounds/:id/entries/bulk`; `POST .../entries` รับ `result` แทน `tags` ได้; ทางเดิมจาก popup ปู (`tags`) ยังใช้ได้
+  - **เปลี่ยนอาหารหลังบันทึกแล้ว** (`PATCH /feeding-rounds/:id/food`) → retag ทุกตัวในรอบ คงผลเดิม (entry + `CrabHistory` แถวเดิม + `feedingNote` เฉพาะถ้า `lastFedAt = round.dueAt`) + คำนวณ `avgScore` ใหม่ถ้ารอบปิดแล้ว
+  - ⚠️ **`setRoundFood` ส่ง WS เฉพาะรอบ `OPEN`** — ถ้าส่งตอนแก้รอบเก่าจากหน้าวิเคราะห์ หน้ากล่องปูอีกเครื่องจะ `applyRound` รอบเก่าทับรอบปัจจุบัน + เด้งพลุรอบนั้นซ้ำ
+- **ข้อ 2 วิเคราะห์อาหาร:** `services/feedingAnalysis.service.ts` + `GET /systems/:id/feeding-analysis?from&to` + หน้า FE `FeedingAnalysisView.vue` route `/feeding-analysis` กลุ่ม care — สรุปรอบ/กรัม/กินหมด% ต่ออาหาร, กราฟแท่งซ้อนรายสัปดาห์ (รอบ/กรัม), **%ไข่ต่อสัปดาห์ช่วงกินปลาเป็นหลัก vs หอยเป็นหลัก**, ตารางรอบกรอกอาหาร/กรัมย้อนหลัง
+  - รอบเก่า (`foodType=null`) **อนุมานจากป้าย ไม่เขียนลง DB** (`inferFoodType`) — ข้อมูลจริงอนุมานได้ทุกรอบที่มีบันทึก
+  - ⚠️ **ผลกับข้อมูลจริงตอนทำ: ยังเทียบไม่ได้** — ระบบ "เจมปิ 1" ให้ปลา 6–23 ส.ค. / หอย 24 ส.ค.–4 ก.ย. / ปลา 6 ก.ย.– แต่วัด %ไข่ห่างกัน ~29 วัน คร่อมทั้ง 2 อาหาร → ทุกช่วงเป็น `MIXED`; ระบบ "ฟาร์มเล็กๆ" มีแต่ช่วงปลา 6 ช่วง. หน้าเว็บบอกวิธีเก็บข้อมูลให้เทียบได้ (วัดทุก ~7 วัน + ให้ชนิดเดียวติดกัน ≥2 สัปดาห์ + วัดวันที่สลับ); เกณฑ์สรุป = ฝั่งละ ≥5 ช่วงจากปู ≥3 ตัว และค่าเฉลี่ยกับค่ากลางต้องชี้ทางเดียวกัน
+  - ⚠️ **`snapshot.lastCheckedAt` เชื่อไม่ได้ทั้งหมด** — ฟอร์มปูเติมวันเช็คเดิมให้ทุกครั้ง หลายแถวเลยมีวันซ้ำของรอบก่อน → ใช้เฉพาะเมื่อไม่ซ้ำแถวก่อนและไม่เกิน `recordedAt`+1 วัน ไม่งั้นใช้ `recordedAt`
+  - สีอาหาร (`lib/feedingFood.ts`) ใช้ชุดเดียวทั้งชิป/ปุ่ม/กราฟ และผ่านเช็คตาบอดสีทั้ง 2 โหมด (ปลา `#2a78d6` / หอย `#eb6834` / ผสม `#1baf7a`)
+- ⏭️ **ถ้าอยากได้คำตอบที่ชัวร์กว่านี้ในอนาคต:** ให้ปลากับหอยคนละแถวกล่อง "ในช่วงเดียวกัน" (ตัดผลของเวลา/ค่าน้ำออก) — ต้องย้ายอาหารจากระดับรอบไปเป็นระดับ entry/กล่อง (ตอนนี้ยังไม่รองรับ)
+
+### 💰 ราคารายตัวในใบจอง + เมนูขยาย-หดได้ + แก้บั๊กราคาตลาด (2026-08-31) — BE tsc + FE `vue-tsc`+`vite build` ผ่าน, **ไม่ต้อง migrate**
+แผน: `C:\Users\piyawat\.claude\plans\feature-1-joyful-pretzel.md`
+- ⚠️ **ยังไม่ทดสอบบนเบราว์เซอร์จริง** — รอผู้ใช้เทส: จองปูแล้วแก้ราคารายตัว, ใบเสนอราคา/ใบเสร็จ, ยืนยันขาย, เมนูกลุ่มขยาย-หด, ราคาตลาดในหน้ารายงาน
+- **บั๊กราคาตลาดสูงผิดปกติ = `divisorG` ตีความผิดตั้งแต่รอบ 2026-07-29** — เดิมตั้ง `divisorG = maxG` ของเรท → **ทุกแถวถูกเป่าให้สูงขึ้น `1000/maxG` เท่า** (SS 110 ก. ได้ ฿270 แทน ฿32 = ×8.5; M 200 ก. ได้ ฿578 แทน ฿130)
+  - สูตรจริงจากกระดาษผู้ใช้: `(น้ำหนักจริง × (C ÷ A)) ÷ B` โดย **A = จำนวนตัว/กก. (ใช้ตัวที่ใหญ่กว่า — "3-4 ตัวโล" ใส่ 3)**, **B = 1000 ÷ A** (111/143/200/333/500/1000 ไม่ใช่ maxG), **C = ราคา**
+  - เพิ่มฟิลด์ `ReportSizeTier.perKilo` (A) — **optional** เพื่อรองรับ tier เก่าใน DB; ไม่มี A → ถอยไปใช้ `น้ำหนัก(กก.) × ราคา/กก.` (ค่าเทียบเท่าที่ถูกต้อง ไม่ใช่สูตรบั๊ก)
+  - ⚠️ **ระบบที่เคยกด "บันทึก" ในไดอะล็อกตั้งค่ามาแล้วมี tier เก่าค้างใน DB** (`persist()` เขียน `reportSettings` ทั้งก้อนทุกครั้ง แม้ผู้ใช้แก้แค่ต้นทุน) → ต้องกดปุ่มใหม่ **"คืนค่าเรทเริ่มต้น"** ในไดอะล็อกตั้งค่าไซส์เพื่อดึงตารางที่มี A เข้ามา
+  - ⚠️ `addTierRow` เดิมตั้ง `divisorG: 1` และ `saveTiers` fallback `|| 1` → เรทที่เพิ่มเองแล้วไม่แตะช่องตัวหาร = `ราคา = น้ำหนัก × ราคา/กก.` (200 ก. → **฿120,000**) แก้เป็นคำนวณจาก A แล้ว
+  - สูตรนี้ **ย่อลงเหลือ `น้ำหนัก(กก.) × ราคา/กก.` พอดี** เมื่อ B = 1000/A เป๊ะ — ผู้ใช้เลือกให้คงคอลัมน์ A/B ไว้ตามกระดาษเพื่อเทียบกับ Excel เดิมได้ตัวต่อตัว (ต่างกันนิดหน่อยเพราะ B ปัดเศษ: L 300 ก. → ฿255.26 vs ฿255.00)
+- **ราคาปูรายตัวในใบจอง (`CommerceView`):** เดิมกำหนดได้แค่ระดับใบ (`ราคา/กก.` / `ราคารวม`) ราคาต่อตัวเกิดตอน `finalizeSale` เท่านั้น → ตอนนี้ระบบ **แบ่งตามน้ำหนักมาให้ก่อน แล้วแก้รายตัวได้** ในตารางเลือกปู (คอลัมน์ใหม่ `ราคา (฿)`)
+  - **ยอดรวมของใบ = ผลบวกราคารายตัวเสมอ** (ผู้ใช้เลือก) — 2 ช่องบน (`ราคา/กก.`, `ราคารวม`) กลายเป็น "ช่องตั้งยอดเพื่อแบ่ง" + ปุ่ม **"แบ่งตามน้ำหนักใหม่"**
+  - **`splitByWeight` ยกเศษให้ตัวสุดท้าย** → `Σ ราคารายตัว = ยอดรวม` เป๊ะ (ของเดิมใน `finalizeSale` ปัดทีละตัว ยอดเพี้ยนได้)
+  - ⚠️ **`crabPrices` ต้องเป็น object ธรรมดา ไม่ใช่ `Map`** — ต้องผูก `v-model.number` ตรง ๆ; ถ้าใช้ `:model-value` + handler จะเป็น controlled input แล้ว**พิมพ์จุดทศนิยมไม่ได้** (โดนเขียนทับทุกคีย์)
+  - ⚠️ ช่องกรอกในแถวตารางต้องมี `@click.stop` + `@keydown.stop` เพราะ `<tr>` มี `@click="togglePick"` — ไม่งั้นพิมพ์ราคาแล้วปูหลุดการเลือก
+  - ⚠️ `openEditReservation` เซ็ต `totalOverride` เอง → ต้องมี flag `allocSuppressed` กัน watcher ไปแบ่งทับราคาที่บันทึกไว้
+- **persist ราคารายตัว = ต่อท้าย `note` ไม่แตะ schema:** `จองปู 3 ตัว #12,15,18 ฿428.57,357.14,214.29` (ราคาเรียงตำแหน่งตรงกับ id)
+  - regex เดิม `/#([\d,]+)/` **หยุดที่ช่องว่างก่อน `฿` จึงไม่กระทบ** — `txnCrabIds`/`parseReservedCrabIds`/`parseReservationContacts` และ 4 หน้าที่เรียก (Crabs/Dashboard/Report/Commerce) ไม่ต้องแก้
+  - helper ใหม่ใน `lib/reservations.ts`: `buildReservationNote(prefix, ids, priceOf?)` + `txnCrabPrices(t)` (คืน Map ว่างถ้าไม่มี marker หรือจำนวนไม่ตรง → ผู้เรียกถอยไปแบ่งตามน้ำหนัก = ใบเก่าใช้ได้ปกติ)
+  - `finalizeSale` ใช้ราคาที่ตกลงไว้ (ไม่แบ่งใหม่) + **เขียน marker ฿ กลับลง note ตอน DONE** ไม่งั้นใบเสร็จที่เปิดย้อนหลังจะไม่มีราคาต่อตัว
+- **ใบเสนอราคา/ใบเสร็จ:** `DocItem.pct` (%ไข่) → **`DocItem.price`** (ราคาต่อตัว, ชิดขวา) — ต้องแก้ตาม **3 จุดที่สร้าง DocItem**: `CommerceView.crabToDocItem`, `CommerceView.sampleDocOpts`, **`PublicShopView.crabToDocItem`** (ใช้ `c.price` ที่มีอยู่แล้ว); แก้ราคารายตัวแล้วจะไม่โชว์บรรทัด "ราคาต่อกิโลกรัม" (จะขัดกับยอดรวม)
+- **เมนูกลุ่มขยาย-หดได้ (`App.vue`):** `v-list-group` + **`open-strategy="single"`** ของ `v-list` (= accordion กางทีละกลุ่ม, มี `v-expand-transition` ในตัวไม่ต้องเขียนอนิเมชันเอง — `v-list-group` ไม่เคยถูกใช้ในโปรเจกต์มาก่อน)
+  - `NAV_GROUPS` เพิ่มฟิลด์ `icon` (หัวกลุ่มที่หุบต้องมีไอคอนถึงจะสแกนตาได้) + `groupBadge()` ยกเลขงานค้าง/จดหมายของลูกมาโชว์ที่หัวกลุ่มตอนหุบ
+  - ⚠️ **`route.meta` ยังว่างตอน App.vue setup** (router ยังไม่ resolve navigation แรก) → ต้องมีทั้ง `watch(() => route.name, ..., {immediate:true})` **และ** fallback อ่าน localStorage `navGroup`; route ปัจจุบันชนะค่าที่จำไว้เสมอ
+
+### 🩹 หน้าฟาร์มว่างเปล่า (2026-08-14) — FE-only, `vue-tsc`+`vite build` ผ่าน, **แต่ต้อง deploy backend ด้วยถึงจะครบ**
+- **อาการ:** เข้า "ฟาร์มของฉัน" แล้วพื้นที่โลกว่างเปล่า (แถบเครื่องมือขึ้นปกติ) + console 2 error
+- **สาเหตุที่ 1 (ตัวทำจอว่าง) = เว็บใหม่ยิงหา backend เก่า:** `boxes[].crabs[]` เพิ่งเพิ่มใน commit `f199f3f` (ของเดิมมีแค่ `crabCount`) → ตัวที่ deploy อยู่ยังไม่ส่ง `crabs` → `b.crabs.length` ใน `FarmCanvas` โยน `TypeError` **ตอน render** = ทั้ง component ไม่ขึ้นเลย
+  - แก้กันพังที่ `world.ts` (`crabs: c.box.crabs ?? []`) — หน้าจะขึ้นแม้ backend เก่า แต่กล่องจะโชว์ "ว่าง" หมดจนกว่าจะ deploy
+  - ⚠️ **ของอื่นในรอบ 2026-08-14 ก็ต้องรอ deploy เหมือนกัน:** กดกล่อง (`GET /village/farms/:id/crabs/:crabId`) + แท่นหนังสือ (`/logbook`) = route ใหม่ → 404; **สัตว์ขี่/สัตว์เลี้ยงบันทึกไม่ได้** เพราะ `avatarBody` ตัวเก่าเป็น `.strict()` → ส่ง `mount`/`riding`/`pet`/`petColor` ไป = 400
+- **สาเหตุที่ 2 (TDZ ซ้ำรอยเดิม) `Cannot access 'Pe' before initialization`:** watcher `immediate:true` ใน `FarmCanvas.vue` เรียก `herd.clear()` แต่ `const herd = createPetHerd()` อยู่ล่างสุดของไฟล์ → ย้ายขึ้นไปไว้ข้าง ๆ `useFarmWalk` แล้ว
+  - ⚠️ **บทเรียนเดิมย้ำอีกรอบ:** ตัวแปรทุกตัวที่ watcher `immediate` แตะ ต้องประกาศ **ก่อน** `watch()` — Vue กลืน error ของ watcher ไว้เอง จอไม่ฟ้องอะไรเลย
+
 ### 🏇 หมู่บ้านฟาร์มรอบขยาย 10 ข้อ (2026-08-14) — BE tsc + FE build ผ่าน, ✅ สโมคเทส REST 45 ข้อผ่าน (ลบ user ทดสอบแล้ว), **ไม่ต้อง migrate**
 - ⚠️ **ยังไม่ทดสอบบนเบราว์เซอร์จริง** — รอผู้ใช้เทส: กดกล่องปูในฟาร์ม, ปุ่มตี, ลากของ/เลื่อนจอในโหมดตกแต่ง, ปูพื้น, ขี่สัตว์, แท่นหนังสือ, สัตว์เลี้ยงเดินตาม
 - **ข้อ 1+7 (กล่องปูในฟาร์ม = เหมือนหน้าปู แต่แขกอ่านอย่างเดียว):** snapshot ส่ง `boxes[].crabs[]` มาด้วย → หน้ากล่องในโลกโชว์ จุดสีเคเบิลไทล์/ขีด/ไข่%/อายุ เหมือน `CrabsView`; กดแล้วเปิด `FarmBoxDialog.vue` (แท็บต่อตัว + โซนข้อมูลวัด/ชนิด/การกิน + ประวัติ + แนบรูป)
@@ -477,6 +527,7 @@ prisma/schema.prisma
 - [x] **Phase 21** — โมดูล B2: `FeedingPlan`/`FeedingRound`/`FeedingEntry` (วงรอบ N วันเว้น M วัน) + WebSocket realtime ✅
 - [x] **Phase 22** — `User.uiPrefs` (จำสถานะโหมดสอนต่อผู้ใช้) ✅
 - [x] **Phase 23** — โมดูล H หมู่บ้านฟาร์ม: `FarmAccess`/`FarmDecor`/`FarmLetter` + `CrabSystem.villageOpen` + `User.farmAvatar` + WS co-presence (เดินเยี่ยมฟาร์มคนอื่นด้วย avatar, ตกแต่งฟาร์ม, ฝากจดหมาย) ✅
+- [x] **Phase 24** — `FeedingRound.foodType/foodGrams` + ติ๊กการกินทีเดียว (`result` → ป้าย) + วิเคราะห์อาหาร ปลา vs หอย ✅
 
 ## Seed data (ทำพร้อม Phase 2) — `prisma/seed.ts`
 ข้อมูลจริงของผู้ใช้ที่ต้อง seed:
@@ -497,6 +548,16 @@ prisma/schema.prisma
 > ค่าตัวเลขจริง (min/max, ปริมาณสาร, รอบวัน) ให้ถามผู้ใช้ตอนทำ seed เพราะผู้ใช้ custom เอง
 
 ## Log การเปลี่ยนแปลง
+- **2026-09-13** — **ติ๊กการกินทีเดียว + ตัดจับเวลารอบให้อาหาร + หน้าวิเคราะห์อาหาร ปลา vs หอย (Phase 24)** — BE tsc + FE build ผ่าน, ✅ migration apply แล้ว, ✅ สโมคเทส 14 ข้อผ่าน
+  - **migration `phase24_feeding_food`**: `FeedingRound.foodType` + `foodGrams` (เพิ่มคอลัมน์ nullable อย่างเดียว)
+  - ไฟล์ใหม่ BE: `services/feedingAnalysis.service.ts`; แก้ `lib/feedingCycle.ts` (+`FOOD_TYPES`/`EAT_RESULTS`/`tagsForResult`/`resultFromTags`/`inferFoodType`), `services/feeding.service.ts` (+`recordEntries`/`setRoundFood`/`retagEntries`, เลิกเขียน `elapsedSec`), `routes/feeding.ts` (+`/entries/bulk`, `/food`, `/feeding-analysis`)
+  - ไฟล์ใหม่ FE: `lib/feedingFood.ts`, `components/{FeedingQuickSheet,FeedingFoodDialog}.vue`, `views/FeedingAnalysisView.vue`; แก้ `CrabsView.vue` (แถบรอบ + แตะกล่อง), `FeedingCelebration.vue`, `types/api.ts`, `services/index.ts`, `router/index.ts`, `lib/tour.ts`
+  - **gotcha ที่เจอจริง:** (1) คำตอบ API ที่มาไม่เรียงลำดับทำให้ snapshot เก่าทับของใหม่ → ต้องเรียงคิว; (2) ส่ง WS ตอนแก้รอบเก่า = อีกเครื่องเอารอบเก่ามาทับ + พลุซ้ำ; (3) `lastCheckedAt` ใน snapshot ติดค่ามาจากรอบก่อนบ่อย ใช้เป็นวันวัดตรง ๆ ไม่ได้; (4) ข้อมูลจริงวัด %ไข่ห่างเกินไป (~29 วัน) จนเทียบอาหารไม่ได้ — ต้องบอกผู้ใช้ให้วัดถี่ขึ้น ไม่ใช่แก้สูตร
+- **2026-08-31** — **ราคาปูรายตัวในใบจอง + ใบเสนอราคาโชว์ราคาต่อตัว + เมนูกลุ่มขยาย-หดได้ + แก้บั๊กราคาตลาด** (แผน `feature-1-joyful-pretzel.md`) — BE tsc + FE build ผ่าน, **ไม่ต้อง migrate** (`reportSettings` เป็น `Json?`, ราคารายตัวฝังใน `Transaction.note` ที่เป็น `@db.Text`)
+  - แก้ BE: `routes/systems.ts` (zod `sizeTiers.perKilo` optional)
+  - แก้ FE: `views/CommerceView.vue` (ราคารายตัว), `lib/reservations.ts` (+`buildReservationNote`/`txnCrabPrices`), `lib/receipt.ts` (`DocItem.pct`→`price`), `views/PublicShopView.vue`, `App.vue` (เมนูกลุ่ม), `views/ReportView.vue` (สูตร+ดีฟอลต์+ไดอะล็อก+Excel), `types/api.ts`
+  - **บั๊กที่แก้:** ราคาตลาดสูงเกินจริงหลายเท่า (`divisorG = maxG` ผิดตั้งแต่รอบ 2026-07-29) — ดูรายละเอียด + วิธีดึงเรทใหม่เข้าระบบที่เคยบันทึกไว้แล้ว ในหัวข้อ NEXT ด้านบน
+  - **gotcha ที่เจอจริง:** (1) `v-model.number` ต้องผูกกับ object ธรรมดา ใช้ `Map` + `:model-value` ไม่ได้ (พิมพ์ทศนิยมไม่ได้); (2) ช่อง input ในแถวที่คลิกได้ต้อง `.stop` ทั้ง click และ keydown; (3) `route.meta` ยังว่างตอน `App.vue` setup จึงต้องมี fallback คู่กับ watcher; (4) marker ใหม่ใน note ต้องวาง**หลัง** `#ids` และเว้นวรรค regex เดิมถึงจะไม่พัง
 - **2026-08-14** — **หมู่บ้านฟาร์มรอบขยาย 10 ข้อ** (กล่องปูแบบหน้าปู + ปุ่มตี + ของตกแต่ง 205 ชิ้น + หมวดพื้น + ลากของ + เลื่อนจอ + สัตว์ขี่ + แท่นหนังสือ + สัตว์เลี้ยง) — BE tsc + FE build ผ่าน, ✅ สโมคเทส REST 45 ข้อผ่านหมด (สร้าง user ชั่วคราว 6 คน → ลบทิ้งแล้ว), **ไม่ต้อง migrate** (mount/pet ลง `farmAvatar` Json, `kind` ของตกแต่งเป็น String อยู่แล้ว)
   - ไฟล์ใหม่ FE: `lib/village/{mounts,pets}.ts`, `components/village/{FarmBoxDialog,FarmBookDialog}.vue`
   - แก้ BE: `services/village.service.ts` (+`getFarmCrab`/`getFarmLogbook`/`CRAB_CARD_SELECT`), `services/crab.service.ts` (+`listCrabProgressBySystem`), `routes/village.ts` (+2 route, zod รับ mount/pet), `lib/realtime.ts` (+`refreshFarmProfile`)
