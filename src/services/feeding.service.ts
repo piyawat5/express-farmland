@@ -361,7 +361,9 @@ export async function openRoundManually(systemId: number, user: AuthUser, at?: D
   const dueAt = plan ? feedTimeOn(plan, now) : now;
   const lead = plan?.recordLeadHours ?? 3;
 
-  const { round } = await openRound(systemId, sys.name, dueAt, lead, plan?.id ?? null);
+  let { round } = await openRound(systemId, sys.name, dueAt, lead, plan?.id ?? null);
+  // เคยกดข้ามรอบของวันนั้นไว้แล้วเปลี่ยนใจ → ปลุกรอบเดิมกลับมาแทนการสร้างใหม่
+  if (round.status === 'SKIPPED') round = await reopenRound(round);
   const progress = await buildRoundProgress(round);
   publish(systemId, { t: 'feeding.opened', systemId, round: progress });
   return progress;
@@ -682,12 +684,10 @@ export async function closeRound(roundId: number, user: AuthUser) {
   return refreshAndPublish(roundId, true);
 }
 
-/** ข้ามรอบ (ไม่ได้ให้อาหารวันนี้) */
-export async function skipRound(roundId: number, user: AuthUser) {
-  const round = await loadRound(roundId);
-  assertOwnership(user, round.system.ownerId);
+/** ปิดรอบเป็น SKIPPED + ยกเลิกงานเตือน 2 ใบของรอบนั้น (ใช้ทั้งข้ามรอบที่เปิดอยู่และข้ามล่วงหน้า) */
+async function markRoundSkipped(round: Pick<FeedingRound, 'id' | 'feedingTaskId' | 'scrapTaskId'>) {
   await prisma.feedingRound.updateMany({
-    where: { id: roundId, status: 'OPEN' },
+    where: { id: round.id, status: 'OPEN' },
     data: { status: 'SKIPPED' },
   });
   const taskIds = [round.feedingTaskId, round.scrapTaskId].filter((v): v is number => v != null);
@@ -697,7 +697,73 @@ export async function skipRound(roundId: number, user: AuthUser) {
       data: { status: 'CANCELLED' },
     });
   }
+}
+
+/** ปลุกรอบที่ข้ามไปกลับมา (เปลี่ยนใจ) — สร้างรอบใหม่ของวันเดิมไม่ได้เพราะ unique [systemId, feedDate] */
+async function reopenRound(round: FeedingRound): Promise<FeedingRound> {
+  const taskIds = [round.feedingTaskId, round.scrapTaskId].filter((v): v is number => v != null);
+  if (taskIds.length) {
+    await prisma.task.updateMany({
+      where: { id: { in: taskIds }, status: 'CANCELLED' },
+      data: { status: 'PENDING' },
+    });
+  }
+  return prisma.feedingRound.update({ where: { id: round.id }, data: { status: 'OPEN' } });
+}
+
+/** ข้ามรอบที่เปิดอยู่ (ติดธุระ ไม่ได้ให้อาหารวันนี้) — ไม่แตะ plan.nextDueAt เพราะเลื่อนไปตอนเปิดรอบแล้ว */
+export async function skipRound(roundId: number, user: AuthUser) {
+  const round = await loadRound(roundId);
+  assertOwnership(user, round.system.ownerId);
+  if (round.status === 'COMPLETED') throw badRequest('รอบนี้บันทึกครบไปแล้ว ข้ามไม่ได้');
+  await markRoundSkipped(round);
   return refreshAndPublish(roundId, false);
+}
+
+/**
+ * ข้ามรอบถัดไปตามแผน "ล่วงหน้า" (รู้ตั้งแต่ตอนกลางวันว่าเย็นนี้ไม่อยู่)
+ * จองแถวของวันนั้นไว้เป็น SKIPPED เลย → พอถึงเวลาจริง openRound เจอแถวเดิม
+ * จึงไม่เปิดรอบ/ไม่สร้างงานเตือนซ้ำ (unique [systemId, feedDate] เป็นตัวคุม)
+ */
+export async function skipUpcomingRound(systemId: number, user: AuthUser) {
+  await assertSystemAccess(systemId, user);
+  const plan = await prisma.feedingPlan.findUnique({ where: { systemId } });
+  if (!plan?.active || !plan.nextDueAt) throw badRequest('ยังไม่มีแผนให้อาหารที่เปิดใช้อยู่ — ไม่มีรอบให้ข้าม');
+
+  const dueAt = plan.nextDueAt;
+  const feedDate = ymdLocal(dueAt);
+  const existing = await prisma.feedingRound.findUnique({
+    where: { systemId_feedDate: { systemId, feedDate } },
+  });
+  if (existing?.status === 'COMPLETED') throw badRequest('รอบวันนั้นบันทึกครบไปแล้ว');
+
+  let round: FeedingRound;
+  if (existing) {
+    await markRoundSkipped(existing);
+    round = existing;
+  } else {
+    round = await prisma.feedingRound.create({
+      data: {
+        systemId,
+        planId: plan.id,
+        feedDate,
+        dueAt,
+        recordDueAt: new Date(dueAt.getTime() + plan.recordLeadHours * 3_600_000),
+        expectedCount: await countLiveCrabs(systemId),
+        status: 'SKIPPED',
+      },
+    });
+  }
+
+  // เลื่อนแผนไปวันถัดไปทันที ไม่งั้นหน้าเว็บยังโชว์วันเดิมว่าเป็น "รอบถัดไป"
+  // (รอบที่เปิดไปแล้วเลื่อน nextDueAt ตั้งแต่ตอนเปิด จึงมาถึงตรงนี้ได้เฉพาะรอบที่ยังไม่เปิด)
+  await prisma.feedingPlan.update({
+    where: { id: plan.id },
+    data: { nextDueAt: nextFeedRunAt(plan, dueAt) },
+  });
+
+  await refreshAndPublish(round.id, false); // บอกอีกเครื่องให้ดึงแผนใหม่ (รอบนี้ไม่เปิดแล้ว)
+  return getCurrentRound(systemId, user);
 }
 
 /** ประวัติรอบย้อนหลัง + สถิติ (อ่านจากคอลัมน์ที่ denormalize ไว้ → ไม่ต้อง aggregate) */

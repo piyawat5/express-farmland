@@ -112,6 +112,16 @@ feedingSystemRouter.post(
   }),
 );
 
+/** ข้ามรอบถัดไปตามแผนล่วงหน้า (ยังไม่ถึงเวลา/ยังไม่เปิดรอบ ก็กดข้ามได้) */
+feedingSystemRouter.post(
+  '/:id/feeding-round/skip-next',
+  validate({ params: idParam }),
+  requireSystemEdit(systemIdFromParam()),
+  asyncHandler(async (req, res) => {
+    res.json(serialize(await svc.skipUpcomingRound(Number(req.params.id), req.user!)));
+  }),
+);
+
 feedingSystemRouter.get(
   '/:id/feeding-rounds',
   validate({ params: idParam, query: roundsQuery }),

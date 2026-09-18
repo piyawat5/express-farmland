@@ -127,7 +127,8 @@
 | PUT | `/api/systems/:id/feeding-plan` | สร้าง/แก้แผน — body `{ onDays*, offDays*, anchorDate*, timeOfDay*, recordLeadHours?, active?, note? }` |
 | DELETE | `/api/systems/:id/feeding-plan` | ลบแผน (204) |
 | GET | `/api/systems/:id/feeding-round/current` | รอบที่เปิดอยู่ + แผน → `{ plan, round }`; **เปิดรอบให้แบบ lazy ถ้าถึงเวลาแล้วแต่ cron ยังไม่ยิง** |
-| POST | `/api/systems/:id/feeding-round/open` | เปิดรอบเอง (นอกแผน) — body `{ at? }` → `RoundProgress` (201) |
+| POST | `/api/systems/:id/feeding-round/open` | เปิดรอบเอง (นอกแผน) — body `{ at? }` → `RoundProgress` (201); ถ้าวันนั้นเคยกดข้ามไว้ = **ปลุกรอบเดิมกลับมา** ไม่สร้างรอบใหม่ |
+| POST | `/api/systems/:id/feeding-round/skip-next` | **ข้ามรอบถัดไปตามแผนล่วงหน้า** (ยังไม่ถึงเวลา/ยังไม่เปิดรอบ) — จองแถวรอบของวันนั้นเป็น `SKIPPED` + เลื่อน `plan.nextDueAt` ไปรอบถัดไป → คืน `{ plan, round }` เหมือน `current` |
 | GET | `/api/systems/:id/feeding-rounds?take&skip` | ประวัติรอบ + สถิติ (อ่านจากคอลัมน์ denormalize) |
 | GET | `/api/systems/:id/feeding-energy?rounds=5` | **หลอดพลัง** — คะแนนการกินเฉลี่ย N รอบล่าสุดต่อปู |
 | GET | `/api/feeding-rounds/:id` | snapshot รอบ |
@@ -137,7 +138,7 @@
 | GET | `/api/systems/:id/feeding-analysis?from&to` | **วิเคราะห์อาหาร** (`from/to` = `YYYY-MM-DD`) — ดูหัวข้อด้านล่าง |
 | DELETE | `/api/feeding-rounds/:id/entries/:crabId` | ยกเลิกการบันทึกของปูตัวนั้น |
 | POST | `/api/feeding-rounds/:id/close` | ปิดรอบทั้งที่ยังบันทึกไม่ครบ |
-| POST | `/api/feeding-rounds/:id/skip` | ข้ามรอบ (ไม่ได้ให้อาหารวันนั้น) |
+| POST | `/api/feeding-rounds/:id/skip` | **ข้ามรอบที่เปิดอยู่** (ติดธุระ ไม่ได้ให้อาหารวันนั้น) → `SKIPPED` + ยกเลิก Task 2 ใบของรอบ; รอบที่ `COMPLETED` แล้วข้ามไม่ได้ (400) · เปลี่ยนใจ = ยิง `/feeding-round/open` ซ้ำ → ปลุกรอบเดิมกลับมา `OPEN` (id เดิม + งานเตือนกลับเป็น PENDING) |
 
 - **วงรอบ:** `onDays/offDays` = "ให้ N วัน เว้น M วัน" — วันเว้นวัน=`1/1` · 2เว้น1=`2/1` · 3เว้น1=`3/1` · 2เว้น2=`2/2` · ทุกวัน=`1/0`. คำนวณจาก `anchorDate` (`src/lib/feedingCycle.ts`) เพราะ **cron เขียนแบบนี้ไม่ได้** (คาบไม่หารลงตัวกับเดือน)
 - **ตั้งใจแยกจาก `ReminderRule`**: ถ้าผูกกัน การกด "ทำเสร็จแล้ว" จะ recompute `nextRunAt` ด้วย `minAdvance` → วงรอบหลุด anchor. รอบนี้สร้าง `Task` ตรง ๆ (`ruleId=null`, `linkType:'FeedingRound'`) จึงได้เมลสรุป/หน้างาน/ปฏิทินครบเหมือนเดิม
