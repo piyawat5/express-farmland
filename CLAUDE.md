@@ -10,11 +10,21 @@
 
 | เฟส | สถานะ |
 |---|---|
-| P0 เก็บ v1 + เตรียม | ✅ commit + tag `v1-final` + branch `v2` ทั้ง 2 repo (ยังไม่ push) · ⏳ **รอผู้ใช้สร้าง DB ใหม่ + shadow DB ใน Plesk แล้วส่ง `DATABASE_URL`** |
-| P1 รากฐาน (schema v2, auth+Facebook, แพ็กเกจ/สลิป, โครง Sakai, mock/demo, หลังบ้านพื้นฐาน) | ⏭️ ถัดไป |
-| P2–P9 | ยังไม่เริ่ม — ดูแผน |
+| P0 เก็บ v1 + เตรียม | ✅ commit + tag `v1-final` + branch `v2` ทั้ง 2 repo (ยังไม่ push) · DB ใหม่พร้อม |
+| P1 รากฐาน | ✅ **เสร็จ 2026-11-08** — BE tsc ✅ · สโมคเทส REST 35 ข้อ ✅ · FE `vue-tsc` + `build` + `build:demo` ✅ · เปิดบน Chrome จริง + ถ่ายภาพหน้าจอ 21 ภาพ (มือถือ/เดสก์ท็อป · มืด/สว่าง · ธีมเทศกาล) ✅ · flow อนุมัติสลิปบนเบราว์เซอร์ ✅ |
+| **P2 ฟาร์ม & ปู** | ⏭️ **ถัดไป** — ระบบปู 3 แบบ · ผังกล่อง · ป๊อปอัปปู "เช็ควันนี้" · ล็อต + รับปูเข้า · ตัวดูรูป · หน่วยน้ำหนัก · `SelectOrCreate` (รายละเอียดใน docs/v2-plan.md ข้อ 5.2–5.4) |
+| P3–P9 | ยังไม่เริ่ม |
 
-ค้างถามผู้ใช้: ข้อ 4.9 ประโยคขาด ("default 15 size และให้…") · รูป sidebar ที่บอกว่าแนบไม่ได้ติดมา (ตอนนี้ใช้แบบ `vue-quest-web` สีหลัก teal)
+**ค้างให้ผู้ใช้ทำ (ไม่ขวาง P2):** สร้าง Facebook App แล้วใส่ `FACEBOOK_APP_ID/SECRET` (ปุ่ม Facebook ซ่อนเองจนกว่าจะใส่) · ตั้งราคาแพ็กเกจจริงที่หลังบ้าน (seed ใส่ 199 / 1,990 / 4,990 เป็นค่าตั้งต้น) · ล็อกอินแอดมินครั้งแรกด้วย Google (`jame.piyawat111@gmail.com` — ผูกบัญชีจากอีเมลให้เอง) หรือรัน `SEED_ADMIN_PASSWORD=... npm run prisma:seed`
+
+### P1 ที่ทำไปแล้ว (2026-11-08)
+- **DB v2** = `familysi_farmland_v2` (user `familysi_piyawattyr5t`) + shadow `familysi_farmland_shadow` (user `familysi_piyawattyr6t`) — ⚠️ **ชื่อ user บน Plesk ต้องมี `familysi_` นำหน้า** (ไม่มี = รหัสผ่านผิด) · `.env` เก็บค่า v1 ไว้เป็นคอมเมนต์ `# v1:` · migration เดียว `20261108084022_init_v2`
+- **schema P1:** `User` (role ADMIN|USER, `notifyEmail` แยกจากอีเมลล็อกอิน — ว่าง = ไม่ส่งเมล, `weightUnit` KHIT|GRAM, `uiPrefs`, `lastLoginAt`) · `OAuthAccount` (+FACEBOOK) · `RefreshToken` · `Plan` · `Subscription` · `PaymentSlip` · `AppSetting` (key `shop`)
+- **สิทธิ์ใช้งาน** (`services/subscription.service.ts`): `computeAccess()` เป็น pure function ใช้ทั้งเช็คทีละคนและหน้ารายชื่อ · ต่ออายุซ้อน = เริ่มต่อจากวันหมดเดิม · ช่วงผ่อนผัน `graceDays` (ค่าเริ่มต้น 3) · cache 30 วิ ต่อคน + `invalidateAccess()` ทุกครั้งที่อนุมัติ/ให้/ยกเลิก/ระงับ · อนุมัติสลิปใช้ conditional `updateMany` (กดซ้ำ = 400)
+- **ชั้น route** (`routes/index.ts`): public (health, auth, `/public/shop`) → `requireAuth` (billing, uploads, admin+`requireAdmin`) → `requireActiveSubscription` (**402** + `details.code=SUBSCRIPTION_REQUIRED`) → ของฟาร์มทั้งหมด · บัญชีถูกระงับ = 403 แม้ token ยังไม่หมด
+- **โมดูล v1 ที่ลบออกจาก branch v2** (ดึงกลับทีละเฟสด้วย `git checkout v1-final -- <path>`): services ทั้งหมดยกเว้น auth/oauth · routes ทั้งหมดยกเว้น health/auth/uploads · `lib/{notify,realtime,reservations,scope}.ts` · `scripts/egg-eval.ts` · ที่ยังเก็บไว้เพราะไม่ผูก schema: `lib/{cron,feedingCycle,cloudinary,mailer}.ts`
+- `GET /auth/providers` → หน้าเว็บโชว์เฉพาะปุ่มโซเชียลที่ตั้งค่าแล้ว (ตอนนี้ google + line)
+- ⚠️ Facebook Login ต้องมีหน้า **นโยบายความเป็นส่วนตัว** + **การลบข้อมูล** → ทำไว้แล้วที่หน้าเว็บ `/privacy` `/data-deletion` (เนื้อหาเป็นร่าง ผู้ใช้ควรอ่านทวน)
 
 ## การตัดสินใจหลักของ v2 (ตกลงแล้ว)
 | หัวข้อ | เลือก |
@@ -38,6 +48,8 @@
 - อ่านข้ามผู้ใช้ (หมู่บ้าน / หลังบ้าน) ต้องใช้ `select` ที่กำหนดฟิลด์เอง ห้าม `include` ทั้งแถว (passwordHash / uiPrefs รั่ว)
 - `assertCanViewFarm` โยน **404 ไม่ใช่ 403** (กันไล่เดา id)
 - FE: watcher `immediate:true` ที่อ้าง `const` ที่ประกาศทีหลัง = พังเงียบ (Vue กลืน error) · ห้ามใช้ CSS `backdrop-filter` (มือถือร้อน) · คำขอที่ต้องเรียงลำดับให้ยิงเป็นคิว ไม่ยิงขนาน
+- FE v2 (เจอจริงตอน P1): **Vue scoped `:global(.a) .b` จะถูกแทนเป็น `.a` เฉยๆ (ทิ้ง `.b`)** → ต้องเขียน `:global(.a .b)` ทั้งก้อน · TS ของ farmland-web เปิด `erasableSyntaxOnly` → ห้ามใช้ parameter property ใน constructor (`constructor(public x)`) · Vite dev ครั้งแรกอาจตอบ 504 "Outdated Optimize Dep" ระหว่างสร้าง cache — รีโหลดหายเอง ไม่เกิดใน build จริง
+- **ถ่ายภาพหน้าจอเช็ค UI:** ในเครื่องไม่มี `chromium-cli` → ติดตั้ง `playwright-core` ใน scratchpad แล้ว `chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe' })` (ไม่ต้องโหลดเบราว์เซอร์) · demo รันด้วย `npx vite --mode demo --port 5174`
 
 ## Conventions
 - `routes → validate(zod) → service → prisma` · ห่อ async route ด้วย `asyncHandler` · error = `{ error, details? }`
@@ -47,4 +59,5 @@
 - คอมเมนต์ / ข้อความเป็นภาษาไทย · `API.md` ต้องอัปเดตทุกครั้งที่แก้ route (v2 จะเขียน API.md ใหม่ตอน P1)
 
 ## Log
+- **2026-11-08** — **P1 เสร็จ** (รายละเอียดในหัวข้อ NEXT) · ผู้ใช้ตอบเพิ่ม: พร้อมเพย์ `0616366635`, ติดต่อทาง Facebook "pintusornsri james piyawat", LINE OA ยังไม่มี, **เก็บธีมเทศกาลไว้** (ย้าย `ThemeDecor.vue` มาแล้ว + เลือกได้จากเมนูโปรไฟล์)
 - **2026-11-08** — เริ่ม v2: ผู้ใช้อนุมัติแผน `docs/v2-plan.md` · P0: commit งานค้างของ v1 ทั้ง 2 repo (frontend เดิมมีแค่ "first commit" งานที่เหลือไม่เคย commit เลย) + tag `v1-final` + branch `v2` · ย้าย CLAUDE.md เดิมไป `docs/v1-notes.md`

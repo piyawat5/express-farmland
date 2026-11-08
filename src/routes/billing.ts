@@ -12,23 +12,22 @@ import { getShopSettings } from '../services/settings.service';
 
 const router = Router();
 
-/** ข้อมูลร้านสำหรับหน้ารอเปิดใช้งาน: พร้อมเพย์ + ช่องทางติดต่อ */
-router.get(
-  '/shop',
-  asyncHandler(async (_req, res) => {
-    const s = await getShopSettings();
-    res.json({
-      shopName: s.shopName,
-      promptPayId: s.promptPayId,
-      promptPayName: s.promptPayName,
-      phone: s.phone,
-      facebookName: s.facebookName,
-      facebookUrl: s.facebookUrl,
-      lineOaUrl: s.lineOaUrl,
-      graceDays: s.graceDays,
-    });
-  }),
-);
+/** ข้อมูลร้านที่เปิดเผยได้ (พร้อมเพย์ + ช่องทางติดต่อ) — ใช้ทั้งหน้ารอเปิดใช้งาน และหน้า public (นโยบาย/ลบข้อมูล) */
+export const publicShopHandler = asyncHandler(async (_req, res) => {
+  const s = await getShopSettings();
+  res.json({
+    shopName: s.shopName,
+    promptPayId: s.promptPayId,
+    promptPayName: s.promptPayName,
+    phone: s.phone,
+    facebookName: s.facebookName,
+    facebookUrl: s.facebookUrl,
+    lineOaUrl: s.lineOaUrl,
+    graceDays: s.graceDays,
+  });
+});
+
+router.get('/shop', publicShopHandler);
 
 router.get(
   '/plans',

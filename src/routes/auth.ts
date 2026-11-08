@@ -108,6 +108,10 @@ router.post(
 );
 
 // ── OAuth (Google / LINE / Facebook) ────────────────────────────────
+router.get('/providers', (_req, res) => {
+  res.json({ providers: oauth.configuredProviders() });
+});
+
 // start: เด้งไปหน้า consent ของ provider
 router.get(
   '/oauth/:provider/start',

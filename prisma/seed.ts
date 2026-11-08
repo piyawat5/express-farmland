@@ -14,7 +14,7 @@ const prisma = new PrismaClient();
 const PLANS = [
   { code: 'MONTHLY', name: 'รายเดือน', priceTHB: 199, durationDays: 30, sortOrder: 1 },
   { code: 'YEARLY', name: 'รายปี', priceTHB: 1990, durationDays: 365, sortOrder: 2, description: 'คุ้มกว่ารายเดือน' },
-  { code: 'LIFETIME', name: 'ซื้อขาด', priceTHB: 4990, durationDays: null, sortOrder: 3, description: 'จ่ายครั้งเดียว ใช้ได้ตลอด' },
+  { code: 'LIFETIME', name: 'ซื้อขาด', priceTHB: 4990, durationDays: null, sortOrder: 3, description: 'ไม่มีค่ารายเดือน' },
 ];
 
 const SHOP = {

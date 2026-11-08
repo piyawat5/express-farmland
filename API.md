@@ -30,10 +30,12 @@
 | Method | Path | หมายเหตุ |
 |---|---|---|
 | GET | `/health` · `/health/db` | |
+| GET | `/public/shop` | เหมือน `/billing/shop` แต่ไม่ต้องล็อกอิน (ช่องทางติดต่อบนหน้านโยบาย/ลบข้อมูล) |
 | POST | `/auth/register` | `{ email, password(≥8), name? }` → `{ accessToken, refreshToken, user }` |
 | POST | `/auth/login` | `{ email, password }` → เหมือนข้างบน · บัญชีถูกระงับ = 403 |
 | POST | `/auth/refresh` | `{ refreshToken }` → ชุดใหม่ (ตัวเดิมใช้ซ้ำไม่ได้) |
 | POST | `/auth/logout` | `{ refreshToken? }` → 204 |
+| GET | `/auth/providers` | `{ providers: ('facebook'\|'google'\|'line')[] }` — ปุ่มโซเชียลที่ตั้งค่าแล้ว (โชว์เฉพาะตัวที่ใช้ได้) |
 | GET | `/auth/oauth/:provider/start` | provider = `google` · `line` · `facebook` → redirect ไปหน้า consent |
 | GET | `/auth/oauth/:provider/callback` | redirect กลับ `FRONTEND_URL/oauth/callback#accessToken=..&refreshToken=..` หรือ `#error=..` |
 

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { requireActiveSubscription, requireAdmin, requireAuth } from '../middleware/auth';
 import healthRoutes from './health';
 import authRoutes from './auth';
-import billingRoutes from './billing';
+import billingRoutes, { publicShopHandler } from './billing';
 import uploadRoutes from './uploads';
 import adminRoutes from './admin';
 import attentionRoutes from './attention';
@@ -19,6 +19,7 @@ const api = Router();
 // ── 1. public ─────────────────────────────────────────────────────────
 api.use(healthRoutes);
 api.use('/auth', authRoutes); // /me ใช้ requireAuth ในตัว
+api.get('/public/shop', publicShopHandler); // ช่องทางติดต่อ (หน้านโยบาย/ลบข้อมูล ที่ไม่ต้องล็อกอิน)
 
 // ── 2. ล็อกอินแล้ว (ยังไม่ต้องจ่ายเงิน) ─────────────────────────────────
 api.use(requireAuth);

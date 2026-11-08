@@ -53,6 +53,15 @@ function verifyState(key: ProviderKey, state: string): void {
   }
 }
 
+/** provider ที่ตั้งค่าครบแล้ว — หน้าเว็บโชว์เฉพาะปุ่มที่กดแล้วใช้ได้จริง */
+export function configuredProviders(): ProviderKey[] {
+  const out: ProviderKey[] = []
+  if (env.FACEBOOK_APP_ID && env.FACEBOOK_APP_SECRET) out.push('facebook')
+  if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) out.push('google')
+  if (env.LINE_CHANNEL_ID && env.LINE_CHANNEL_SECRET) out.push('line')
+  return out
+}
+
 /** สร้าง URL ไปหน้า consent ของ provider */
 export function getAuthorizeUrl(provider: string): string {
   const { key } = normalizeProvider(provider);
