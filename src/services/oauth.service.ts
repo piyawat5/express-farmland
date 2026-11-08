@@ -4,23 +4,24 @@ import type { OAuthProvider } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { env } from '../config/env';
 import { AppError } from '../lib/http';
-import { issueTokens, type TokenPair } from './auth.service';
+import { issueTokens, touchLogin, type TokenPair } from './auth.service';
 
 // ════════════════════════════════════════════════════════════════════
-//  OAuth — login with Google / LINE (authorization-code flow, ข้อ 1.2.3)
+//  OAuth — login with Google / LINE / Facebook (authorization-code flow)
 //  เขียนเอง ไม่เพิ่ม passport; ใช้ global fetch (Node 18+)
 //  ไม่เก็บ password — ผูกบัญชีผ่าน OAuthAccount (provider + providerAccountId)
 // ════════════════════════════════════════════════════════════════════
 
-// base ของ callback (ต้องตรงกับที่ลงทะเบียนใน Google/LINE console)
+// base ของ callback (ต้องตรงกับที่ลงทะเบียนใน Google/LINE/Facebook console)
 const CALLBACK_BASE = env.OAUTH_CALLBACK_BASE ?? 'http://localhost:3000/api/auth/oauth';
 
-type ProviderKey = 'google' | 'line';
+type ProviderKey = 'google' | 'line' | 'facebook';
 
 function normalizeProvider(p: string): { key: ProviderKey; enumVal: OAuthProvider } {
   if (p === 'google') return { key: 'google', enumVal: 'GOOGLE' };
   if (p === 'line') return { key: 'line', enumVal: 'LINE' };
-  throw new AppError(400, 'provider ไม่รองรับ (google/line เท่านั้น)');
+  if (p === 'facebook') return { key: 'facebook', enumVal: 'FACEBOOK' };
+  throw new AppError(400, 'provider ไม่รองรับ (google/line/facebook เท่านั้น)');
 }
 
 const redirectUri = (key: ProviderKey) => `${CALLBACK_BASE}/${key}/callback`;
@@ -31,6 +32,9 @@ function assertConfigured(key: ProviderKey) {
   }
   if (key === 'line' && (!env.LINE_CHANNEL_ID || !env.LINE_CHANNEL_SECRET)) {
     throw new AppError(500, 'ยังไม่ได้ตั้งค่า LINE OAuth (LINE_CHANNEL_ID/SECRET)');
+  }
+  if (key === 'facebook' && (!env.FACEBOOK_APP_ID || !env.FACEBOOK_APP_SECRET)) {
+    throw new AppError(500, 'ยังไม่ได้ตั้งค่า Facebook Login (FACEBOOK_APP_ID/SECRET)');
   }
 }
 
@@ -66,6 +70,16 @@ export function getAuthorizeUrl(provider: string): string {
       prompt: 'select_account',
     });
     return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+  }
+  if (key === 'facebook') {
+    const params = new URLSearchParams({
+      client_id: env.FACEBOOK_APP_ID!,
+      redirect_uri: redirectUri('facebook'),
+      response_type: 'code',
+      scope: 'email,public_profile',
+      state,
+    });
+    return `https://www.facebook.com/${env.FACEBOOK_GRAPH_VERSION}/dialog/oauth?${params.toString()}`;
   }
   // LINE
   const params = new URLSearchParams({
@@ -162,6 +176,44 @@ async function lineProfile(code: string): Promise<Profile> {
   };
 }
 
+async function facebookProfile(code: string): Promise<Profile> {
+  const v = env.FACEBOOK_GRAPH_VERSION;
+  const tokenParams = new URLSearchParams({
+    client_id: env.FACEBOOK_APP_ID!,
+    client_secret: env.FACEBOOK_APP_SECRET!,
+    redirect_uri: redirectUri('facebook'),
+    code,
+  });
+  const tokenRes = await fetch(`https://graph.facebook.com/${v}/oauth/access_token?${tokenParams.toString()}`);
+  if (!tokenRes.ok) throw new AppError(401, 'แลก token กับ Facebook ไม่สำเร็จ');
+  const token = (await tokenRes.json()) as { access_token?: string };
+  if (!token.access_token) throw new AppError(401, 'ไม่ได้รับ access token จาก Facebook');
+
+  // appsecret_proof = ยืนยันว่า token นี้ถูกใช้โดยเซิร์ฟเวอร์ของเราเอง (Facebook แนะนำ)
+  const proof = crypto.createHmac('sha256', env.FACEBOOK_APP_SECRET!).update(token.access_token).digest('hex');
+  const meParams = new URLSearchParams({
+    fields: 'id,name,email,picture.width(256).height(256)',
+    access_token: token.access_token,
+    appsecret_proof: proof,
+  });
+  const meRes = await fetch(`https://graph.facebook.com/${v}/me?${meParams.toString()}`);
+  if (!meRes.ok) throw new AppError(401, 'ดึงโปรไฟล์ Facebook ไม่สำเร็จ');
+  const me = (await meRes.json()) as {
+    id: string;
+    name?: string;
+    email?: string;
+    picture?: { data?: { url?: string; is_silhouette?: boolean } };
+  };
+  const pic = me.picture?.data;
+  return {
+    providerAccountId: me.id,
+    // Facebook ให้อีเมลเฉพาะที่ยืนยันแล้ว และบางบัญชี (สมัครด้วยเบอร์โทร) ไม่มีอีเมล
+    email: me.email ?? null,
+    name: me.name ?? null,
+    avatarUrl: pic?.url && !pic.is_silhouette ? pic.url : null,
+  };
+}
+
 /** แลก code → โปรไฟล์ → หา/สร้าง user → ออก token (rotate-able) */
 export async function handleCallback(
   provider: string,
@@ -173,7 +225,8 @@ export async function handleCallback(
   assertConfigured(key);
   verifyState(key, state);
 
-  const profile = key === 'google' ? await googleProfile(code) : await lineProfile(code);
+  const profile =
+    key === 'google' ? await googleProfile(code) : key === 'facebook' ? await facebookProfile(code) : await lineProfile(code);
 
   // 1) เคยผูกบัญชี provider นี้แล้ว → ใช้ user เดิม
   const existing = await prisma.oAuthAccount.findUnique({
@@ -183,11 +236,12 @@ export async function handleCallback(
     include: { user: true },
   });
   if (existing) {
-    if (!existing.user.active) throw new AppError(403, 'บัญชีถูกปิดใช้งาน');
-    // อัปเดตรูปโปรไฟล์ล่าสุดจาก provider (ข้อ 4.5)
+    if (!existing.user.active) throw new AppError(403, 'บัญชีนี้ถูกระงับ กรุณาติดต่อแอดมิน');
+    // อัปเดตรูปโปรไฟล์ล่าสุดจาก provider (ลิงก์รูปของ Facebook หมดอายุได้ จึงอัปเดตทุกครั้งที่เข้า)
     if (profile.avatarUrl && profile.avatarUrl !== existing.user.avatarUrl) {
       await prisma.user.update({ where: { id: existing.user.id }, data: { avatarUrl: profile.avatarUrl } });
     }
+    await touchLogin(existing.user.id);
     return issueTokens(existing.user, userAgent);
   }
 
@@ -200,18 +254,21 @@ export async function handleCallback(
       data: {
         email,
         name: profile.name,
-        role: 'FARM_OWNER',
+        role: 'USER',
         passwordHash: null,
-        lineId: key === 'line' ? profile.providerAccountId : null,
         avatarUrl: profile.avatarUrl,
       },
     });
-  } else if (profile.avatarUrl && profile.avatarUrl !== user.avatarUrl) {
-    user = await prisma.user.update({ where: { id: user.id }, data: { avatarUrl: profile.avatarUrl } });
+  } else {
+    if (!user.active) throw new AppError(403, 'บัญชีนี้ถูกระงับ กรุณาติดต่อแอดมิน');
+    if (profile.avatarUrl && profile.avatarUrl !== user.avatarUrl) {
+      user = await prisma.user.update({ where: { id: user.id }, data: { avatarUrl: profile.avatarUrl } });
+    }
   }
   await prisma.oAuthAccount.create({
     data: { userId: user.id, provider: enumVal, providerAccountId: profile.providerAccountId },
   });
+  await touchLogin(user.id);
   return issueTokens(user, userAgent);
 }
 

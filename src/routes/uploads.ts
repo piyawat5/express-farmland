@@ -1,14 +1,16 @@
 import { Router } from 'express';
 import multer from 'multer';
+import { z } from 'zod';
 import { asyncHandler, AppError, badRequest } from '../lib/http';
-import { serialize } from '../lib/serialize';
 import { cloudinaryConfigured, uploadImage } from '../lib/cloudinary';
+import { validate } from '../middleware/validate';
 
 // ════════════════════════════════════════════════════════════════════
-//  Uploads — รูปภาพประวัติพัฒนาการปู (เก็บบน Cloudinary, signed)
+//  Uploads — รูปทั้งระบบเก็บบน Cloudinary (signed ผ่าน backend)
+//  POST /api/uploads/image?kind=slip|crab|bug  (multipart field: image) → { url, publicId }
+//  ใช้ได้แค่ requireAuth (ไม่ต้องมีสิทธิ์ใช้งาน) เพราะหน้ารอเปิดใช้งานต้องอัปสลิปได้
 // ════════════════════════════════════════════════════════════════════
 
-// เก็บไฟล์ใน memory แล้วส่ง buffer ต่อให้ Cloudinary (ไม่แตะดิสก์)
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 }, // 8MB/รูป
@@ -18,19 +20,22 @@ const upload = multer({
   },
 });
 
+const FOLDERS = { slip: 'farmland-v2/slip', crab: 'farmland-v2/crab', bug: 'farmland-v2/bug' } as const;
+
 const router = Router();
 
-// POST /api/uploads/crab-image  (multipart field: image) → { url, publicId }
 router.post(
-  '/crab-image',
+  '/image',
+  validate({ query: z.object({ kind: z.enum(['slip', 'crab', 'bug']).default('crab') }) }),
   upload.single('image'),
   asyncHandler(async (req, res) => {
     if (!cloudinaryConfigured()) {
-      throw new AppError(503, 'ยังไม่ได้ตั้งค่า Cloudinary (CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET)');
+      throw new AppError(503, 'ยังไม่ได้ตั้งค่าที่เก็บรูป (CLOUDINARY_*)');
     }
     if (!req.file) throw badRequest('ไม่พบไฟล์รูป (field "image")');
-    const result = await uploadImage(req.file.buffer);
-    res.status(201).json(serialize(result));
+    const kind = (req.query.kind as keyof typeof FOLDERS) ?? 'crab';
+    // แยกโฟลเดอร์ตามผู้ใช้ → ตามลบ/ตรวจทีหลังได้ง่าย
+    res.status(201).json(await uploadImage(req.file.buffer, `${FOLDERS[kind]}/u${req.user!.id}`));
   }),
 );
 

@@ -5,7 +5,7 @@ dotenv.config();
 
 // ── Timezone ─────────────────────────────────────────────────────────
 // host (Plesk) อาจรันเป็น UTC → cron "0 20 * * *" และ default 08:00 จะเพี้ยน 7 ชม.
-// บังคับ process timezone เป็นเวลาไทยเสมอ (single user ไทย) — ตั้งก่อนใช้ Date ใดๆ
+// บังคับ process timezone เป็นเวลาไทยเสมอ (ลูกค้าเป็นคนไทยทั้งหมด) — ตั้งก่อนใช้ Date ใดๆ
 // override ได้ผ่าน env TZ ถ้าจำเป็น
 process.env.TZ = process.env.TZ || 'Asia/Bangkok';
 
@@ -40,6 +40,11 @@ const schema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   LINE_CHANNEL_ID: z.string().optional(),
   LINE_CHANNEL_SECRET: z.string().optional(),
+  // Facebook Login (v2) — สร้าง app ที่ developers.facebook.com
+  FACEBOOK_APP_ID: z.string().optional(),
+  FACEBOOK_APP_SECRET: z.string().optional(),
+  // Graph API มีอายุราว 2 ปีต่อเวอร์ชัน — ถ้า Facebook แจ้งว่าเวอร์ชันเลิกใช้ ให้เปลี่ยนค่านี้
+  FACEBOOK_GRAPH_VERSION: z.string().default('v24.0'),
   OAUTH_CALLBACK_BASE: z.string().optional(), // เช่น http://localhost:3000/api/auth/oauth
 
   // Cloudinary (รูปประวัติพัฒนาการปู) — optional จนกว่าจะตั้งค่า (ถ้าไม่ตั้ง อัปรูปจะ 503)

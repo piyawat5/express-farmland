@@ -1,63 +1,33 @@
 import { Router } from 'express';
+import { requireActiveSubscription, requireAdmin, requireAuth } from '../middleware/auth';
 import healthRoutes from './health';
 import authRoutes from './auth';
-import { requireAuth } from '../middleware/auth';
-import { systemRouter, boxRouter, filterTankRouter } from './systems';
-import crabRoutes from './crabs';
-import { feedingSystemRouter, feedingRoundRouter } from './feeding';
-import { waterSystemRouter, waterTestRouter } from './water';
-import { substanceRouter, dosingSystemRouter, calibrationRouter, ruleRouter } from './dosing';
-import { schedulerRouter, reminderRuleRouter, taskRouter, systemEventRouter } from './scheduler';
-import { contactRouter, transactionRouter, outreachRouter } from './commerce';
-import { ledgerRouter, dashboardRouter } from './finance';
-import inventoryRoutes from './inventory';
+import billingRoutes from './billing';
 import uploadRoutes from './uploads';
-import publicRoutes from './public';
-import villageRoutes from './village';
+import adminRoutes from './admin';
+import attentionRoutes from './attention';
+
+// ════════════════════════════════════════════════════════════════════
+//  ลำดับชั้นสิทธิ์ (สำคัญ — เพิ่ม route ใหม่ให้ถูกชั้น):
+//    1. public           health, auth
+//    2. ล็อกอินแล้ว        billing (หน้ารอเปิดใช้งาน), uploads, admin (+requireAdmin)
+//    3. มีสิทธิ์ใช้งาน      ทุกอย่างของฟาร์ม
+// ════════════════════════════════════════════════════════════════════
 
 const api = Router();
 
-// ── public / secret-protected (ไม่ต้อง login) ────────────────────────
+// ── 1. public ─────────────────────────────────────────────────────────
 api.use(healthRoutes);
-api.use('/auth', authRoutes); // register/login/refresh — public; /me มี requireAuth ในตัว
-api.use('/scheduler', schedulerRouter); // ป้องกันด้วย x-scheduler-secret (Plesk cron) — ไม่ใช้ JWT
-api.use('/public', publicRoutes); // หน้าร้าน public (ข้อ 5) — /public/shop/:slug
+api.use('/auth', authRoutes); // /me ใช้ requireAuth ในตัว
 
-// ── ทุก endpoint ใต้จากนี้ต้อง login ──────────────────────────────────
+// ── 2. ล็อกอินแล้ว (ยังไม่ต้องจ่ายเงิน) ─────────────────────────────────
 api.use(requireAuth);
-
-// A. ฮาร์ดแวร์
-api.use('/systems', systemRouter);
-api.use('/boxes', boxRouter);
-api.use('/filter-tanks', filterTankRouter);
-// B. ปู
-api.use('/crabs', crabRoutes);
-// B2. แผนให้อาหาร + รอบบันทึกการกิน (Phase 21)
-api.use('/systems', feedingSystemRouter);
-api.use('/feeding-rounds', feedingRoundRouter);
-// C. น้ำ + การปรุงน้ำ (หลาย router ซ้อนบน /systems ได้ — แยกตามโมดูล)
-api.use('/systems', waterSystemRouter);
-api.use('/systems', dosingSystemRouter);
-api.use('/water-tests', waterTestRouter);
-api.use('/substances', substanceRouter);
-api.use('/dosing-calibrations', calibrationRouter);
-api.use('/dosing-rules', ruleRouter);
-// D. Reminder engine (กฎ + งาน + event chain) — tick อยู่ใน schedulerRouter ด้านบน
-api.use('/reminder-rules', reminderRuleRouter);
-api.use('/tasks', taskRouter);
-api.use('/systems', systemEventRouter);
-// E. คู่ค้า & การซื้อขาย (Contact / Transaction / OutreachLog)
-api.use('/contacts', contactRouter);
-api.use('/transactions', transactionRouter);
-api.use('/outreach', outreachRouter);
-// F. การเงิน (สมุดบัญชี + dashboard/analytics)
-api.use('/ledger', ledgerRouter);
-api.use('/dashboard', dashboardRouter);
-// G. คลังของ (อาหาร/สาร/อุปกรณ์ + แจ้งเตือนใกล้หมด)
-api.use('/inventory', inventoryRoutes);
-// H. หมู่บ้านฟาร์ม (Phase 23) — เยี่ยมชมฟาร์มคนอื่น / ตกแต่ง / จดหมาย
-api.use('/village', villageRoutes);
-// รูปภาพประวัติพัฒนาการปู (Cloudinary)
+api.use('/billing', billingRoutes);
 api.use('/uploads', uploadRoutes);
+api.use('/admin', requireAdmin, adminRoutes);
+
+// ── 3. ต้องมีสิทธิ์ใช้งาน ────────────────────────────────────────────────
+api.use(requireActiveSubscription);
+api.use('/attention', attentionRoutes);
 
 export default api;

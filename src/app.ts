@@ -16,7 +16,7 @@ export function createApp() {
   app.use(morgan(isProd ? 'combined' : 'dev'));
 
   app.get('/', (_req, res) => {
-    res.json({ name: 'express-farmland', message: 'ระบบจัดการเลี้ยงปูคอนโด API' });
+    res.json({ name: 'express-farmland', version: 2, message: 'ระบบจัดการปู API' });
   });
 
   app.use('/api', api);

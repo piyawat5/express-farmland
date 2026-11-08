@@ -1,27 +1,27 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { Prisma, type Role } from '@prisma/client';
+import { Prisma, type Role, type User, type WeightUnit } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { env } from '../config/env';
 import { AppError, badRequest } from '../lib/http';
+import { getAccess } from './subscription.service';
 
 // ════════════════════════════════════════════════════════════════════
-//  Auth — register / login / refresh / logout  (ข้อ 1.2.4)
-//  access token = JWT อายุสั้น (ใส่ Authorization header ทุก request)
-//  refresh token = สุ่ม เก็บ "hash" ลง DB เพื่อ revoke ได้; rotate ทุกครั้งที่ refresh
+//  Auth — register / login / refresh / logout / me
+//  access token = JWT อายุสั้น · refresh token = สุ่ม เก็บ hash ใน DB (rotate ทุกครั้ง)
+//  สมัครได้ทุกคน แต่จะใช้ระบบตัวจริงได้ต้องมีสิทธิ์ใช้งาน (ดู subscription.service)
 // ════════════════════════════════════════════════════════════════════
 
 export type AuthUser = { id: number; role: Role; email: string };
 type AccessPayload = { sub: number; role: Role; email: string };
 
-/** แปลง "15m" / "30d" / "1h" / "60s" → มิลลิวินาที (ใช้คำนวณ expiry ของ token) */
+/** แปลง "15m" / "30d" / "1h" / "60s" → มิลลิวินาที */
 function parseDurationMs(s: string): number {
   const m = /^(\d+)\s*([smhd])$/.exec(s.trim());
   if (!m) throw new Error(`รูปแบบ duration ไม่ถูกต้อง: ${s}`);
-  const n = Number(m[1]);
   const unit = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as 's' | 'm' | 'h' | 'd'];
-  return n * unit;
+  return Number(m[1]) * unit;
 }
 
 const ACCESS_TTL_SEC = Math.floor(parseDurationMs(env.ACCESS_TOKEN_TTL) / 1000);
@@ -34,7 +34,7 @@ function signAccessToken(user: AuthUser): string {
   return jwt.sign(payload, env.JWT_ACCESS_SECRET, { expiresIn: ACCESS_TTL_SEC });
 }
 
-/** verify access token → คืน AuthUser (โยน AppError 401 ถ้าไม่ valid/หมดอายุ) */
+/** verify access token → AuthUser (โยน 401 ถ้าไม่ valid/หมดอายุ) */
 export function verifyAccessToken(token: string): AuthUser {
   try {
     const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET) as unknown as AccessPayload;
@@ -44,7 +44,6 @@ export function verifyAccessToken(token: string): AuthUser {
   }
 }
 
-/** ออก refresh token ใหม่ (เก็บ hash ลง DB) — คืน token ดิบให้ client */
 async function issueRefreshToken(userId: number, userAgent?: string | null): Promise<string> {
   const raw = crypto.randomBytes(48).toString('hex');
   await prisma.refreshToken.create({
@@ -60,7 +59,7 @@ async function issueRefreshToken(userId: number, userAgent?: string | null): Pro
 
 export type TokenPair = { accessToken: string; refreshToken: string; user: AuthUser };
 
-/** ออก access + refresh สำหรับ user (ใช้ตอน login / register / oauth) */
+/** ออก access + refresh (ใช้ตอน login / register / oauth / refresh) */
 export async function issueTokens(
   user: { id: number; role: Role; email: string },
   userAgent?: string | null,
@@ -71,75 +70,74 @@ export async function issueTokens(
   return { accessToken, refreshToken, user: authUser };
 }
 
-const publicUser = (u: {
-  id: number;
-  email: string;
-  name: string | null;
-  role: Role;
-  avatarUrl?: string | null;
-  uiPrefs?: unknown;
-}) => ({
+/** บันทึกเวลาเข้าใช้ล่าสุด (โชว์ในหลังบ้าน) — ไม่ให้พังทั้ง flow ถ้าเขียนไม่สำเร็จ */
+export async function touchLogin(userId: number) {
+  await prisma.user.update({ where: { id: userId }, data: { lastLoginAt: new Date() } }).catch(() => undefined);
+}
+
+/** ข้อมูลของ "ตัวเอง" ที่ส่งให้หน้าเว็บ — ห้ามใช้ตัวนี้ตอนส่งข้อมูลคนอื่น (มี uiPrefs) */
+export const publicUser = (u: User) => ({
   id: u.id,
   email: u.email,
   name: u.name,
   role: u.role,
-  avatarUrl: u.avatarUrl ?? null,
-  // ค่าตั้งค่า UI ต่อผู้ใช้ (โหมดสอน: tourDoneAt/tourSkipped) — Phase 22
+  avatarUrl: u.avatarUrl,
+  notifyEmail: u.notifyEmail,
+  weightUnit: u.weightUnit,
+  hasPassword: !!u.passwordHash,
+  /** อีเมลเทียมของ LINE/Facebook ที่ไม่ให้อีเมล — หน้าเว็บไม่ควรโชว์/ใช้ส่งเมล */
+  emailIsPlaceholder: u.email.endsWith('@oauth.local'),
   uiPrefs: (u.uiPrefs as Record<string, unknown> | null) ?? null,
+  createdAt: u.createdAt,
 });
 
-// ── register (email + password) ───────────────────────────────────────
 export async function register(
   input: { email: string; password: string; name?: string | null },
   userAgent?: string | null,
 ) {
   const email = input.email.trim().toLowerCase();
-  const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) throw badRequest('อีเมลนี้ถูกใช้สมัครแล้ว');
+  if (await prisma.user.findUnique({ where: { email } })) throw badRequest('อีเมลนี้ถูกใช้สมัครแล้ว');
 
   const passwordHash = await bcrypt.hash(input.password, 10);
   const user = await prisma.user.create({
-    data: { email, name: input.name ?? null, passwordHash, role: 'FARM_OWNER' },
+    data: { email, name: input.name ?? null, passwordHash, role: 'USER', lastLoginAt: new Date() },
   });
   const tokens = await issueTokens(user, userAgent);
   return { ...tokens, user: publicUser(user) };
 }
 
-// ── login (email + password) ──────────────────────────────────────────
-export async function login(
-  input: { email: string; password: string },
-  userAgent?: string | null,
-) {
+export async function login(input: { email: string; password: string }, userAgent?: string | null) {
   const email = input.email.trim().toLowerCase();
   const user = await prisma.user.findUnique({ where: { email } });
-  // ข้อความเดียวกันทั้งกรณีไม่มี user / รหัสผิด — กัน enumerate อีเมล
-  if (!user || !user.passwordHash || !user.active) {
-    throw new AppError(401, 'อีเมลหรือรหัสผ่านไม่ถูกต้อง');
-  }
+  // ข้อความเดียวกันทุกกรณี — กันไล่เดาว่าอีเมลไหนมีบัญชี
+  if (!user || !user.passwordHash) throw new AppError(401, 'อีเมลหรือรหัสผ่านไม่ถูกต้อง');
   const ok = await bcrypt.compare(input.password, user.passwordHash);
   if (!ok) throw new AppError(401, 'อีเมลหรือรหัสผ่านไม่ถูกต้อง');
+  if (!user.active) throw new AppError(403, 'บัญชีนี้ถูกระงับ กรุณาติดต่อแอดมิน');
 
+  await touchLogin(user.id);
   const tokens = await issueTokens(user, userAgent);
   return { ...tokens, user: publicUser(user) };
 }
 
-// ── refresh (rotate) ──────────────────────────────────────────────────
 export async function refresh(rawToken: string, userAgent?: string | null) {
-  const tokenHash = sha256(rawToken);
   const record = await prisma.refreshToken.findUnique({
-    where: { tokenHash },
+    where: { tokenHash: sha256(rawToken) },
     include: { user: true },
   });
   if (!record || record.revokedAt || record.expiresAt < new Date() || !record.user.active) {
     throw new AppError(401, 'กรุณาเข้าสู่ระบบใหม่');
   }
-  // rotation: ปิด token เดิม แล้วออกชุดใหม่
-  await prisma.refreshToken.update({ where: { id: record.id }, data: { revokedAt: new Date() } });
+  // rotation: ปิดตัวเดิมแบบมีเงื่อนไข → token เดียวกันใช้ refresh ซ้ำไม่ได้แม้ยิงพร้อมกัน
+  const changed = await prisma.refreshToken.updateMany({
+    where: { id: record.id, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  if (changed.count !== 1) throw new AppError(401, 'กรุณาเข้าสู่ระบบใหม่');
   const tokens = await issueTokens(record.user, userAgent);
   return { ...tokens, user: publicUser(record.user) };
 }
 
-// ── logout (revoke refresh token ปัจจุบัน) ────────────────────────────
 export async function logout(rawToken: string | undefined) {
   if (!rawToken) return;
   await prisma.refreshToken.updateMany({
@@ -148,24 +146,53 @@ export async function logout(rawToken: string | undefined) {
   });
 }
 
-// ── me (โปรไฟล์ปัจจุบัน) ───────────────────────────────────────────────
+/** โปรไฟล์ตัวเอง + สิทธิ์ใช้งาน (หน้าเว็บใช้ตัดสินว่าจะพาไปหน้าไหน) */
 export async function getMe(userId: number) {
-  const user = await prisma.user.findUnique({ where: { id: userId } });
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { oauthAccounts: { select: { provider: true } } },
+  });
   if (!user) throw new AppError(401, 'ไม่พบผู้ใช้');
-  return publicUser(user);
+  const access = await getAccess(userId, { fresh: true });
+  return {
+    ...publicUser(user),
+    providers: user.oauthAccounts.map((a) => a.provider),
+    access,
+  };
 }
 
-/**
- * อัปเดตค่าตั้งค่า UI ของผู้ใช้ (merge ทับของเดิม) — Phase 22 (โหมดสอน)
- * เก็บว่า user คนไหนติ๊ก "ไม่ต้องแสดง tutorial อีก" ให้จำข้ามเครื่อง (localStorage อย่างเดียวไม่พอ)
- */
+export async function updateProfile(
+  userId: number,
+  input: { name?: string | null; notifyEmail?: string | null; weightUnit?: WeightUnit },
+) {
+  const data: Prisma.UserUpdateInput = {};
+  if (input.name !== undefined) data.name = input.name?.trim() || null;
+  // เว้นว่าง = ไม่ส่งอีเมลแจ้งเตือน
+  if (input.notifyEmail !== undefined) data.notifyEmail = input.notifyEmail?.trim().toLowerCase() || null;
+  if (input.weightUnit !== undefined) data.weightUnit = input.weightUnit;
+  await prisma.user.update({ where: { id: userId }, data });
+  return getMe(userId);
+}
+
+/** ค่าหน้าเว็บส่วนตัว (merge ทับของเดิม) — ธีม, เสียง, หน้าแรก, ทัวร์ที่ดูแล้ว */
 export async function updateUiPrefs(userId: number, patch: Record<string, unknown>) {
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { uiPrefs: true } });
   if (!user) throw new AppError(401, 'ไม่พบผู้ใช้');
   const merged = { ...((user.uiPrefs as Record<string, unknown> | null) ?? {}), ...patch };
-  const updated = await prisma.user.update({
+  await prisma.user.update({ where: { id: userId }, data: { uiPrefs: merged as Prisma.InputJsonValue } });
+  return merged;
+}
+
+/** ตั้ง/เปลี่ยนรหัสผ่าน — บัญชีที่มีรหัสอยู่แล้วต้องใส่รหัสเดิม (บัญชี OAuth ตั้งครั้งแรกได้เลย) */
+export async function changePassword(userId: number, input: { currentPassword?: string; newPassword: string }) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw new AppError(401, 'ไม่พบผู้ใช้');
+  if (user.passwordHash) {
+    const ok = input.currentPassword ? await bcrypt.compare(input.currentPassword, user.passwordHash) : false;
+    if (!ok) throw badRequest('รหัสผ่านเดิมไม่ถูกต้อง');
+  }
+  await prisma.user.update({
     where: { id: userId },
-    data: { uiPrefs: merged as Prisma.InputJsonValue },
+    data: { passwordHash: await bcrypt.hash(input.newPassword, 10) },
   });
-  return publicUser(updated);
 }

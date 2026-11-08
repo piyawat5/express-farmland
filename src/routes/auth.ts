@@ -7,7 +7,7 @@ import * as auth from '../services/auth.service';
 import * as oauth from '../services/oauth.service';
 
 // ════════════════════════════════════════════════════════════════════
-//  Auth routes — /api/auth  (register / login / refresh / logout / me)
+//  Auth routes — /api/auth  (register / login / refresh / logout / me / OAuth)
 //  refresh token รับ/ส่งผ่าน body (frontend เก็บใน localStorage)
 // ════════════════════════════════════════════════════════════════════
 
@@ -65,7 +65,24 @@ router.get(
   }),
 );
 
-/** ค่าตั้งค่า UI ต่อผู้ใช้ (merge) — ใช้จำว่าใครติ๊ก "ไม่ต้องแสดงโหมดสอนอีก" (Phase 22) */
+const profileBody = z.object({
+  name: z.string().max(100).nullable().optional(),
+  // เว้นว่าง ('' หรือ null) = ไม่ส่งอีเมลแจ้งเตือน
+  notifyEmail: z.union([z.string().email('อีเมลไม่ถูกต้อง'), z.literal(''), z.null()]).optional(),
+  weightUnit: z.enum(['KHIT', 'GRAM']).optional(),
+});
+
+/** แก้โปรไฟล์ตัวเอง: ชื่อ / อีเมลรับแจ้งเตือน / หน่วยน้ำหนัก */
+router.patch(
+  '/me',
+  requireAuth,
+  validate({ body: profileBody }),
+  asyncHandler(async (req, res) => {
+    res.json(await auth.updateProfile(req.user!.id, req.body));
+  }),
+);
+
+/** ค่าหน้าเว็บส่วนตัว (merge) — ธีม / เสียง / หน้าแรก / ทัวร์ที่ดูแล้ว */
 router.patch(
   '/me/prefs',
   requireAuth,
@@ -75,7 +92,22 @@ router.patch(
   }),
 );
 
-// ── OAuth (Google / LINE) — login with provider (ข้อ 1.2.3) ───────────
+router.post(
+  '/me/password',
+  requireAuth,
+  validate({
+    body: z.object({
+      currentPassword: z.string().optional(),
+      newPassword: z.string().min(8, 'รหัสผ่านอย่างน้อย 8 ตัวอักษร'),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    await auth.changePassword(req.user!.id, req.body);
+    res.status(204).end();
+  }),
+);
+
+// ── OAuth (Google / LINE / Facebook) ────────────────────────────────
 // start: เด้งไปหน้า consent ของ provider
 router.get(
   '/oauth/:provider/start',
