@@ -47,6 +47,10 @@ const schema = z.object({
   CLOUDINARY_API_KEY: z.string().optional(),
   CLOUDINARY_API_SECRET: z.string().optional(),
 
+  // AI ประเมิน % ไข่จากรูปส่องไข่ (Claude) — optional: ไม่ตั้ง key = ปิดฟีเจอร์ (endpoint ตอบ 503, หน้าเว็บซ่อนเอง)
+  ANTHROPIC_API_KEY: z.string().optional(),
+  EGG_AI_MODEL: z.string().default('claude-opus-5-5'),
+
   // Scheduler
   SCHEDULER_SECRET: z.string().min(1, 'SCHEDULER_SECRET is required'),
   ENABLE_INTERNAL_CRON: z

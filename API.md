@@ -98,6 +98,7 @@
 | GET | `/api/crabs?systemId&status&type` | list + filter |
 | GET | `/api/crabs/export?systemId` | **ส่งออก CSV** (ข้อ 6) — คืน `text/csv` (มี BOM), 1 แถว/ตัว |
 | GET | `/api/crabs/progress?systemId` | **ภาพรวมพัฒนาการปู before/after** (ปูที่ยังเลี้ยงอยู่ + 2 รอบวัดล่าสุด) |
+| POST | `/api/crabs/egg-estimate` | **AI ประเมิน % ไข่จากรูปส่องไข่** (ไม่บันทึกอะไร — คืนค่าที่เสนอ) |
 | POST | `/api/crabs` | สร้าง |
 | GET | `/api/crabs/:id` | รายตัว (+`history[]` แยกโซน) |
 | PATCH | `/api/crabs/:id` | แก้ |
@@ -110,6 +111,11 @@
 - `sex`: `MALE` (ผู้) · `INTERSEX` (กะเทย) · `FEMALE` (เมีย) · `UNKNOWN` — default `UNKNOWN`
 - `grade`: `A` (สมบูรณ์) · `B` (ไม่สมบูรณ์) · `null`
 - **Body:** `{ systemId*, code?, boxId?, cableTieColor?, feedingNote?, lastCheckedAt?, type?, sex?, grade?, sourceSellerId?, buyerId?, lockedForBuyerId?, purchasePrice?, purchaseDate?, weightG?, startFirmnessPct?(0-100), currentFirmnessPct?(0-100), readyAt?, sellPrice?, sellDate?, status?, round?, note?, measureImageUrl?, measureImagePublicId? }`
+- `measureAiPct?`(0-100) = % ที่ AI เสนอสำหรับรูปนี้ → เก็บเป็น `snapshot.aiEggPct` คู่กับ % ที่บันทึกจริง (เก็บเฉพาะเมื่อส่ง `measureImageUrl` มาด้วย) — ใช้วัดความแม่น AI และกันไม่ให้แถวที่ "รับค่า AI ตรง ๆ" ถูกใช้เป็นรูปตัวอย่าง
+- **`POST /api/crabs/egg-estimate`** body `{ imageUrl*, crabId? }` → `{ usable, eggPct|null (ปัดทีละ 5), confidence: high|medium|low, reason (ไทย), referenceCount, previousPct|null, model }`
+  - `imageUrl` ต้องเป็นรูปบน Cloudinary ของระบบเรา (`https://res.cloudinary.com/<CLOUDINARY_CLOUD_NAME>/image/upload/...`) ไม่งั้น 400; `crabId` (ถ้ามี) ต้องเป็นปูในระบบที่แก้ได้ (403/404)
+  - ใช้ Claude (`EGG_AI_MODEL`, ดีฟอลต์ `claude-opus-5-5`) เทียบกับรูปตัวอย่างของฟาร์มเจ้าของ: ช่วงละ 10% × 2 รูป (เฉพาะแถวก่อนวันนี้, ปูไม่ใช่ขุนเนื้อ, ไม่เอาแถวที่ % = aiEggPct) + รอบก่อนของปูตัวเดียวกัน
+  - **503** = ยังไม่ตั้ง `ANTHROPIC_API_KEY` (FE ซ่อนฟีเจอร์เงียบ ๆ) · **502** = AI/key มีปัญหา (FE โชว์ error + ปุ่มลองใหม่) · **429** = เกิน 60 ครั้ง/10 นาที/ผู้ใช้
 - `measureImageUrl`/`measureImagePublicId` = รูปแนบรอบวัด (จาก `POST /api/uploads/crab-image`) — เก็บใน `snapshot` ของ `CrabHistory` โซน MEASURE; **ส่งมาเฉพาะตอนอัปรูปใหม่** (มีรูป → บังคับสร้างรอบ MEASURE ใหม่แม้ค่าอื่นไม่เปลี่ยน)
 - **`GET /api/crabs/progress`** คืน `[{ id, code, boxId, boxCode, type, cableTieColor, status, before, after, deltaDays }]` — `before`/`after` = `{ recordedAt, measuredAt, weightG, firmnessPct, imageUrl } | null` (`after`=รอบล่าสุด, `before`=รอบก่อน), `deltaDays`=จำนวนวัน before→after
 - `cableTieColor` = สีเคเบิ้ลไทล์รัดกล้าม (hex/ชื่อสี) — **1 กล่องใส่ปูได้หลายตัว** ใช้สีแยกว่าตัวไหนเป็นตัวไหน (ข้อ 2.2)

@@ -6,6 +6,7 @@ import { serialize } from '../lib/serialize';
 import { idParam } from '../lib/validation';
 import { requireSystemEdit, systemIdFromBody, systemIdFromCrab } from '../middleware/auth';
 import * as svc from '../services/crab.service';
+import { estimateEggForUser } from '../services/eggEstimate.service';
 
 // ════════════════════════════════════════════════════════════════════
 //  โมดูล B — Crab (ปู)
@@ -43,6 +44,8 @@ const crabBody = z.object({
   // แนบรูปรอบวัด (โซน MEASURE) — ส่งมาเฉพาะตอนอัปรูปใหม่ (ข้อ 1)
   measureImageUrl: z.string().url().nullable().optional(),
   measureImagePublicId: z.string().nullable().optional(),
+  // % ที่ AI เสนอสำหรับรูปนี้ (เก็บคู่กับ % ที่ผู้ใช้บันทึกจริง → วัดความแม่น AI ย้อนหลังได้)
+  measureAiPct: z.number().int().min(0).max(100).nullable().optional(),
 });
 
 const listQuery = z.object({
@@ -96,6 +99,20 @@ router.get(
   asyncHandler(async (req, res) => {
     const { systemId } = req.query as z.infer<typeof exportQuery>;
     res.json(serialize(await svc.listCrabLog(req.user!, systemId)));
+  }),
+);
+
+// AI ประเมิน % ไข่จากรูปส่องไข่ (ฟีดแบ็ค 2026-10-17 ข้อ 1.2) — ต้องมาก่อน '/:id'
+// ไม่ได้บันทึกอะไร: คืนแค่ค่าที่ AI เสนอ แล้วหน้าเว็บเติมลงช่อง % ให้ผู้ใช้กดบันทึกเอง
+const eggEstimateBody = z.object({
+  imageUrl: z.string().url(),
+  crabId: z.number().int().positive().optional(), // ปูใหม่ (รับล็อต) ยังไม่มี id
+});
+router.post(
+  '/egg-estimate',
+  validate({ body: eggEstimateBody }),
+  asyncHandler(async (req, res) => {
+    res.json(await estimateEggForUser(req.user!, req.body as z.infer<typeof eggEstimateBody>));
   }),
 );
 

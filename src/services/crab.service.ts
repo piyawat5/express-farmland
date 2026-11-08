@@ -10,6 +10,7 @@ import { deleteImage } from '../lib/cloudinary';
 type MeasureImageFields = {
   measureImageUrl?: string | null;
   measureImagePublicId?: string | null;
+  measureAiPct?: number | null; // % ที่ AI เสนอสำหรับรูปนี้ → snapshot.aiEggPct (วัดความแม่นย้อนหลัง)
 };
 export type CreateCrabInput = Prisma.CrabUncheckedCreateInput & MeasureImageFields;
 export type UpdateCrabInput = Prisma.CrabUncheckedUpdateInput & MeasureImageFields;
@@ -145,7 +146,7 @@ function diffZones(
 }
 
 export function createCrab(input: CreateCrabInput) {
-  const { measureImageUrl, measureImagePublicId, ...data } = input;
+  const { measureImageUrl, measureImagePublicId, measureAiPct, ...data } = input;
   return prisma.$transaction(async (tx) => {
     if (data.boxId != null) {
       await assertBoxInSystem(tx, data.systemId, data.boxId);
@@ -183,6 +184,7 @@ export function createCrab(input: CreateCrabInput) {
             lastCheckedAt: toJson(crab.lastCheckedAt),
             imageUrl: measureImageUrl ?? null,
             imagePublicId: measureImagePublicId ?? null,
+            ...(hasImage && measureAiPct != null ? { aiEggPct: measureAiPct } : {}),
           },
         },
       });
@@ -192,7 +194,7 @@ export function createCrab(input: CreateCrabInput) {
 }
 
 export function updateCrab(id: number, input: UpdateCrabInput) {
-  const { measureImageUrl, measureImagePublicId, ...data } = input;
+  const { measureImageUrl, measureImagePublicId, measureAiPct, ...data } = input;
   const imageProvided = measureImageUrl !== undefined; // FE ส่งมาเฉพาะตอนอัปรูปใหม่
   return prisma.$transaction(async (tx) => {
     const current = await tx.crab.findUnique({ where: { id } });
@@ -235,6 +237,7 @@ export function updateCrab(id: number, input: UpdateCrabInput) {
       }
       m.snapshot.imageUrl = measureImageUrl ?? null;
       m.snapshot.imagePublicId = measureImagePublicId ?? null;
+      if (measureImageUrl != null && measureAiPct != null) m.snapshot.aiEggPct = measureAiPct;
     }
 
     const crab = await tx.crab.update({ where: { id }, data });
