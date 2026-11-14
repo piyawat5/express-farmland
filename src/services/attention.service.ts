@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma';
 import type { AuthUser } from './auth.service';
 import { dueSummary } from './reminders/task.service';
+import { forecast } from './feed/stock.service';
 
 // ════════════════════════════════════════════════════════════════════
 //  ป้าย ⚠ นำทาง — รวม "สิ่งที่ยังไม่ได้ทำ/ยังไม่ได้ตั้งค่า" ไว้ที่เดียว
@@ -49,6 +50,60 @@ export async function getAttention(user: AuthUser): Promise<AttentionItem[]> {
       cta: 'ดูงาน',
       count: due.total,
     });
+  }
+
+  // ── อาหารปู (P4) ──
+  if (systems > 0) {
+    const [plans, stocked, foods, fc, review] = await Promise.all([
+      prisma.feedingPlan.count({ where: { ownerId: user.id } }),
+      prisma.feedItem.count({ where: { ownerId: user.id, stockSet: true, active: true } }),
+      prisma.feedItem.findMany({ where: { ownerId: user.id, active: true }, select: { id: true, name: true } }),
+      forecast(user.id),
+      prisma.feedingRound.count({ where: { ownerId: user.id, reviewPending: true } }),
+    ]);
+    if (plans < systems) {
+      items.push({
+        key: 'feeding_plan_missing',
+        level: 'setup',
+        menu: 'feed',
+        target: 'feed-plan',
+        title: 'ยังไม่ได้ตั้งแผนให้อาหาร',
+        cta: 'ตั้งแผน',
+      });
+    }
+    if (!stocked) {
+      items.push({
+        key: 'feed_stock_missing',
+        level: 'setup',
+        menu: 'feed',
+        target: 'feed-stock',
+        title: 'ยังไม่ได้ใส่จำนวนอาหารที่มี',
+        cta: 'ใส่สต็อก',
+      });
+    }
+    const low = foods.filter((f) => fc.get(f.id)?.low);
+    if (low.length) {
+      items.push({
+        key: 'feed_low',
+        level: 'warn',
+        menu: 'feed',
+        target: 'feed-stock',
+        title: `${low.map((f) => f.name).join(', ')}ใกล้หมด — พอไม่ถึง 2 รอบ`,
+        cta: 'ซื้อเพิ่ม',
+        count: low.length,
+      });
+    }
+    if (review) {
+      items.push({
+        key: 'feeding_review',
+        level: 'warn',
+        menu: 'crabs',
+        target: 'crabs-feed-review',
+        title: 'มีรอบให้อาหารที่ระบบปิดให้ รอคุณยืนยัน',
+        cta: 'ดู',
+        count: review,
+      });
+    }
   }
 
   if (systems === 0) {

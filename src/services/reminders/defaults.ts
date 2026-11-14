@@ -37,6 +37,7 @@ export const KIND_ICON: Record<ReminderKind, string> = {
   FILTER: '🧽',
   CUSTOM: '🔔',
   LOT_COST: '💰',
+  FEED_LOW: '🛒',
 };
 
 /** รอบเช็คปูถ้ายังไม่มีกฎ (ระบบเก่าก่อน P3) */

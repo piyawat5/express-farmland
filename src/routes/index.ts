@@ -8,6 +8,7 @@ import adminRoutes from './admin';
 import attentionRoutes from './attention';
 import { contactRouter, crabCheckRouter, crabRouter, eggAiRouter, lotRouter, systemRouter } from './farm';
 import { reminderRouter, schedulerRouter } from './reminders';
+import { feedRouter } from './feed';
 import { markDirty } from '../services/reminders/task.service';
 
 // ════════════════════════════════════════════════════════════════════
@@ -48,5 +49,7 @@ api.use('/crab-checks', crabCheckRouter);
 api.use('/egg-ai', eggAiRouter);
 // แจ้งเตือน (P3)
 api.use('/reminders', reminderRouter);
+// อาหารปู (P4)
+api.use('/feed', feedRouter);
 
 export default api;

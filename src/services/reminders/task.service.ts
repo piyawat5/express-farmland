@@ -5,6 +5,8 @@ import { assertOwned } from '../../lib/scope';
 import { fmtDayLong } from '../../lib/thaiDate';
 import type { AuthUser } from '../auth.service';
 import { DEFAULT_CHECK_DAYS, KIND_ICON, defaultRulesData } from './defaults';
+import { markFedForSystem, openUnfedRounds, syncFeeding } from '../feed/round.service';
+import { forecast } from '../feed/stock.service';
 import { addDays, atTime, dayDiff, endOfDay, isTimeBased, nextDueAfter, projectDues, startOfDay } from './schedule';
 
 // ════════════════════════════════════════════════════════════════════
@@ -78,6 +80,9 @@ export async function syncOwner(ownerId: number, now = new Date(), opts: { force
 }
 
 async function doSync(ownerId: number, now: Date) {
+  // รอบให้อาหาร (P4): เปิดรอบที่ถึงเวลา + ปิดรอบที่ลืมปิด — ต้องมาก่อน เพราะงาน "ให้อาหารปู" อ่านจากรอบ
+  await syncFeeding(ownerId, now);
+
   // 0) ระบบที่ยังไม่มีแจ้งเตือนเริ่มต้น (สร้างก่อนมี P3) → เติมให้
   const bare = await prisma.crabSystem.findMany({
     where: { ownerId, reminderRules: { none: { defaultKey: { not: null } } } },
@@ -179,6 +184,61 @@ async function doSync(ownerId: number, now: Date) {
       data: { status: 'DONE', doneAt: now, closedBy: 'AUTO', openKey: null },
     });
   }
+
+  // 4) ให้อาหารปู (P4) — รอบเปิดแล้วแต่ยังไม่กด "ให้อาหารแล้ว" = มีงาน · ให้แล้ว/ปิดรอบ = ปิดงานเอง
+  const [feedRules, unfed, openFeed] = await Promise.all([
+    prisma.reminderRule.findMany({ where: { ownerId, kind: 'FEEDING', active: true }, select: { id: true, systemId: true, title: true, priority: true } }),
+    openUnfedRounds(ownerId),
+    prisma.task.findMany({ where: { ownerId, kind: 'FEEDING', status: 'OPEN' }, select: { id: true, systemId: true } }),
+  ]);
+  const unfedBy = new Map(unfed.map((r) => [r.systemId, r]));
+  const feedCreate = feedRules
+    .filter((r) => unfedBy.has(r.systemId) && !openFeed.some((t) => t.systemId === r.systemId))
+    .map((r) => ({
+      ownerId,
+      systemId: r.systemId,
+      ruleId: r.id,
+      kind: 'FEEDING' as const,
+      title: r.title,
+      priority: r.priority,
+      dueAt: unfedBy.get(r.systemId)!.dueAt,
+      openKey: `rule:${r.id}`,
+    }));
+  if (feedCreate.length) await prisma.task.createMany({ data: feedCreate, skipDuplicates: true });
+  const feedDone = openFeed.filter((t) => t.systemId == null || !unfedBy.has(t.systemId)).map((t) => t.id);
+  if (feedDone.length) {
+    await prisma.task.updateMany({
+      where: { id: { in: feedDone }, status: 'OPEN' },
+      data: { status: 'DONE', doneAt: now, closedBy: 'AUTO', openKey: null },
+    });
+  }
+
+  // 5) อาหารใกล้หมด (พอไม่ถึง 2 รอบ) — ซื้อเพิ่ม/นับใหม่แล้วปิดเอง
+  const [fc, foods, openLow] = await Promise.all([
+    forecast(ownerId, now),
+    prisma.feedItem.findMany({ where: { ownerId, active: true }, select: { id: true, name: true } }),
+    prisma.task.findMany({ where: { ownerId, kind: 'FEED_LOW', status: 'OPEN' }, select: { id: true, refId: true } }),
+  ]);
+  const lowIds = new Set(foods.filter((f) => fc.get(f.id)?.low).map((f) => f.id));
+  const lowCreate = foods
+    .filter((f) => lowIds.has(f.id) && !openLow.some((t) => t.refId === f.id))
+    .map((f) => ({
+      ownerId,
+      kind: 'FEED_LOW' as const,
+      title: `${f.name}ใกล้หมด — ซื้อเพิ่ม`,
+      priority: 'MEDIUM' as const,
+      dueAt: now,
+      openKey: `feed:${f.id}`,
+      refId: f.id,
+    }));
+  if (lowCreate.length) await prisma.task.createMany({ data: lowCreate, skipDuplicates: true });
+  const lowDone = openLow.filter((t) => t.refId == null || !lowIds.has(t.refId)).map((t) => t.id);
+  if (lowDone.length) {
+    await prisma.task.updateMany({
+      where: { id: { in: lowDone }, status: 'OPEN' },
+      data: { status: 'DONE', doneAt: now, closedBy: 'AUTO', openKey: null },
+    });
+  }
 }
 
 // ── อ่าน ──────────────────────────────────────────────────────────────
@@ -202,7 +262,7 @@ const TASK_SELECT = {
 type TaskRow = Prisma.TaskGetPayload<{ select: typeof TASK_SELECT }>;
 
 /** งานแบบไหนกด "เสร็จแล้ว" เองได้ — ใส่ราคาล็อตต้องไปใส่ราคาจริง */
-export const canCompleteKind = (kind: TaskRow['kind']) => kind !== 'LOT_COST';
+export const canCompleteKind = (kind: TaskRow['kind']) => kind !== 'LOT_COST' && kind !== 'FEED_LOW';
 
 function shapeTask(t: TaskRow, now: Date) {
   return {
@@ -312,7 +372,11 @@ async function closeTask(user: AuthUser, id: number, status: 'DONE' | 'SKIPPED',
   const now = new Date();
   const task = assertOwned(await prisma.task.findUnique({ where: { id }, include: { rule: true } }), user, 'งานนี้');
   if (task.status !== 'OPEN') throw badRequest('งานนี้ปิดไปแล้ว');
-  if (!canCompleteKind(task.kind)) throw badRequest('งานนี้จะปิดเองเมื่อใส่ราคาล็อตแล้ว');
+  if (!canCompleteKind(task.kind)) {
+    throw badRequest(task.kind === 'FEED_LOW' ? 'งานนี้จะปิดเองเมื่อซื้ออาหารเพิ่ม' : 'งานนี้จะปิดเองเมื่อใส่ราคาล็อตแล้ว');
+  }
+  // "เสร็จแล้ว" ที่งานให้อาหาร = ให้อาหารรอบที่เปิดอยู่แล้ว (ต่อด้วยบันทึกการกินที่หน้ากล่องปู)
+  if (task.kind === 'FEEDING' && task.systemId && status === 'DONE') await markFedForSystem(task.systemId);
   // ทำย้อนหลังได้ (ลืมกด) แต่ห้ามอนาคต และไม่ย้อนเกิน 60 วัน
   let at = doneAtInput && doneAtInput < now ? doneAtInput : now;
   if (dayDiff(at, now) > 60) at = addDays(now, -60);

@@ -6,7 +6,8 @@
 //    P1            บัญชีผู้ใช้ · แพ็กเกจ/สมาชิก · สลิปโอนเงิน · ตั้งค่าร้าน
 //    P2            ระบบปู · กล่อง · คู่ค้า · ล็อต · ปู · การเช็คปู
 //    P3            แจ้งเตือน (กฎ/งาน/อีเมลตามเวลา)
-//    P4–P9         อาหาร · น้ำ · ขาย/บัญชี · ชุมชน · หมู่บ้านฟาร์ม
+//    P4            อาหาร (สต็อก · แผน · รอบให้อาหาร · ผลการกินรายตัว)
+//    P5–P9         น้ำ · ขาย/บัญชี · ชุมชน · หมู่บ้านฟาร์ม
 // ════════════════════════════════════════════════════════════════════
 
 generator client {
@@ -64,6 +65,12 @@ model User {
   // ── แจ้งเตือน (P3) ──
   reminderRules ReminderRule[]
   tasks         Task[]
+
+  // ── อาหารปู (P4) ──
+  feedItems     FeedItem[]
+  feedMoves     FeedStockMove[]
+  feedingPlans  FeedingPlan[]
+  feedingRounds FeedingRound[]
 }
 
 enum Role {
@@ -218,6 +225,8 @@ model CrabSystem {
   crabs         Crab[]
   reminderRules ReminderRule[]
   tasks         Task[]
+  feedingPlan   FeedingPlan?
+  feedingRounds FeedingRound[]
 
   @@index([ownerId])
 }
@@ -331,7 +340,8 @@ model Crab {
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
-  checks CrabCheck[]
+  checks         CrabCheck[]
+  feedingEntries FeedingEntry[]
 
   @@unique([ownerId, code])
   @@index([systemId, status, deletedAt])
@@ -457,6 +467,7 @@ enum ReminderKind {
   FILTER // เปลี่ยนใยกรองละเอียด
   CUSTOM // เรื่องที่ผู้ใช้ตั้งเอง
   LOT_COST // งานอัตโนมัติ: ใส่ราคาล็อต (ไม่มีกฎ ปิดเองเมื่อใส่ราคา)
+  FEED_LOW // งานอัตโนมัติ: อาหารเหลือพอไม่ถึง 2 รอบ (ปิดเองเมื่อซื้อเพิ่ม)
 }
 
 enum Priority {
@@ -481,4 +492,171 @@ enum TaskStatus {
 enum TaskCloser {
   USER // ผู้ใช้กดเสร็จ/ข้าม
   AUTO // ระบบปิดให้ (บันทึกจริงแล้ว / ใส่ราคาแล้ว / ไม่มีปูถึงรอบแล้ว)
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  อาหารปู (P4) — สต็อก (ต่อเจ้าของ ใช้ร่วมทุกระบบ) · แผน (ต่อระบบ) · รอบ · ผลการกินรายตัว
+//  - รอบเปิดได้ทีละรอบต่อระบบ: ถึงเวลารอบใหม่แล้วรอบเก่ายังเปิด → ปิดให้เอง (autoClosed) แล้วถามยืนยันครั้งเดียว
+//  - ทุกตัวเริ่มที่ "กินหมด" (สร้างแถวผลการกินให้ตอนเปิดรอบ) ผู้ใช้แตะเฉพาะตัวที่มีปัญหา
+//  - เก็บอาหาร "รายตัว" (FeedingEntry.itemId) ไม่ใช่รายรอบ → แบ่งกล่องให้คนละอาหารได้ + ใช้วิเคราะห์ (P7)
+//  - ปิดรอบ = ตัดสต็อกจากแถวผลการกิน (แก้ย้อนหลัง/ไม่ได้ให้ = คำนวณสต็อกใหม่ให้)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ชนิดอาหาร + จำนวนคงเหลือ — ค่าเริ่มต้น "ปลา" / "หอย" หน่วยชิ้น (สร้างให้ตอนใช้ครั้งแรก)
+model FeedItem {
+  id        Int      @id @default(autoincrement())
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId   Int
+  name      String
+  emoji     String?
+  unit      String   @default("ชิ้น")
+  /// คงเหลือ — มีความหมายเมื่อ stockSet = true
+  qty       Decimal  @default(0) @db.Decimal(10, 1)
+  /// เคยใส่จำนวนแล้ว (ซื้อ/นับใหม่) — ยังไม่เคย = ไม่ตัดสต็อก ไม่เตือนใกล้หมด (ไม่บังคับใส่สต็อก)
+  stockSet  Boolean  @default(false)
+  /// false = ซ่อน (ลบ) — เก็บแถวไว้เพราะประวัติการให้อาหารอ้างถึง
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  moves        FeedStockMove[]
+  entries      FeedingEntry[]
+  plansMain    FeedingPlan[]    @relation("PlanMainItem")
+  plansAlt     FeedingPlan[]    @relation("PlanAltItem")
+  planDayItems FeedingPlanDay[]
+
+  @@unique([ownerId, name])
+}
+
+/// ความเคลื่อนไหวสต็อก: ซื้อ (+) · ใช้ตอนปิดรอบ (−) · นับใหม่ (± ส่วนต่าง)
+model FeedStockMove {
+  id        Int           @id @default(autoincrement())
+  owner     User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId   Int
+  item      FeedItem      @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  itemId    Int
+  kind      StockMoveKind
+  qty       Decimal       @db.Decimal(10, 1)
+  /// ราคาที่จ่าย (ซื้อ) — P6 ลงบัญชีให้เอง
+  priceTHB  Decimal?      @db.Decimal(12, 2)
+  round     FeedingRound? @relation(fields: [roundId], references: [id], onDelete: SetNull)
+  roundId   Int?
+  note      String?       @db.Text
+  at        DateTime      @default(now())
+  createdAt DateTime      @default(now())
+
+  @@index([itemId, at])
+  @@index([roundId])
+}
+
+enum StockMoveKind {
+  BUY
+  USE
+  ADJUST
+}
+
+/// แผนให้อาหาร 1 ระบบ = 1 แผน — วงรอบ "ให้ N วัน เว้น M วัน" + อาหาร (อย่างเดียว / สลับ 2 อย่าง) + ปรับรายวัน
+model FeedingPlan {
+  id            Int         @id @default(autoincrement())
+  owner         User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId       Int
+  system        CrabSystem  @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId      Int         @unique
+  active        Boolean     @default(true)
+  onDays        Int         @default(1)
+  /// 0 = ให้ทุกวัน
+  offDays       Int         @default(1)
+  /// วันแรกของช่วง "ให้" — จุดอ้างอิงวงรอบ
+  anchorDate    DateTime
+  timeOfDay     String      @default("18:00")
+  pattern       FeedPattern @default(SINGLE)
+  item          FeedItem?   @relation("PlanMainItem", fields: [itemId], references: [id], onDelete: SetNull)
+  itemId        Int?
+  /// อาหารอย่างที่ 2 (แบบสลับ)
+  altItem       FeedItem?   @relation("PlanAltItem", fields: [altItemId], references: [id], onDelete: SetNull)
+  altItemId     Int?
+  piecesPerCrab Decimal     @default(1) @db.Decimal(4, 1)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  days FeedingPlanDay[]
+}
+
+enum FeedPattern {
+  SINGLE // อาหารอย่างเดียวทุกรอบ
+  ALTERNATE // สลับ 2 อย่างทีละรอบ
+}
+
+/// ปรับแผนรายวัน: เปลี่ยนอาหารวันนั้น / "วันนี้ไม่ให้อาหาร"
+model FeedingPlanDay {
+  id     Int         @id @default(autoincrement())
+  plan   FeedingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  planId Int
+  /// "YYYY-MM-DD" (วันไทย)
+  date   String      @db.Char(10)
+  skip   Boolean     @default(false)
+  item   FeedItem?   @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  itemId Int?
+
+  @@unique([planId, date])
+}
+
+/// รอบให้อาหาร 1 วัน — เปิดเมื่อถึงเวลาให้อาหาร (หรือกด "เริ่มให้อาหาร" ก่อนได้)
+model FeedingRound {
+  id            Int         @id @default(autoincrement())
+  owner         User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId       Int
+  system        CrabSystem  @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId      Int
+  /// "YYYY-MM-DD" (วันไทย) — 1 ระบบ 1 รอบต่อวัน
+  feedDate      String      @db.Char(10)
+  dueAt         DateTime
+  status        RoundStatus @default(OPEN)
+  /// กด "ให้อาหารแล้ว" (แจ้งเตือนให้อาหารปิดตอนนี้) — ต่อจากนี้คือช่วงเก็บเศษ/บันทึกการกิน
+  fedAt         DateTime?
+  closedAt      DateTime?
+  /// ระบบปิดให้เพราะถึงรอบใหม่แล้วยังไม่ได้ปิด (ตัวที่ไม่ได้บันทึก = กินหมด)
+  autoClosed    Boolean     @default(false)
+  /// รอให้ผู้ใช้ยืนยันรอบที่ปิดให้ (ถูกต้อง / แก้ย้อนหลัง / วันนั้นไม่ได้ให้อาหาร)
+  reviewPending Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  entries FeedingEntry[]
+  moves   FeedStockMove[]
+
+  @@unique([systemId, feedDate])
+  @@index([ownerId, status])
+}
+
+enum RoundStatus {
+  OPEN
+  DONE
+  SKIPPED // วันนั้นไม่ได้ให้อาหาร
+}
+
+/// ปู 1 ตัวในรอบ 1 รอบ: ได้อาหารอะไร กี่ชิ้น กินไหม — สร้างตอนเปิดรอบ (เริ่มที่ "กินหมด")
+model FeedingEntry {
+  id        Int          @id @default(autoincrement())
+  round     FeedingRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  roundId   Int
+  crab      Crab         @relation(fields: [crabId], references: [id], onDelete: Cascade)
+  crabId    Int
+  /// กล่องตอนให้อาหาร (ปูอาจย้ายทีหลัง)
+  boxId     Int?
+  item      FeedItem?    @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  itemId    Int?
+  pieces    Decimal      @default(1) @db.Decimal(4, 1)
+  result    EatResult    @default(ATE)
+  updatedAt DateTime     @updatedAt
+
+  @@unique([roundId, crabId])
+  @@index([crabId])
+}
+
+enum EatResult {
+  ATE // กินหมด
+  LITTLE // กินน้อย
+  NONE // ไม่กิน
 }

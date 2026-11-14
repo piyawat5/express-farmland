@@ -146,8 +146,45 @@ key ที่มีตอนนี้: `system_missing` (menu `crabs`, target `c
 Task = { id, kind, title, icon, priority 'HIGH'|'MEDIUM'|'LOW', dueAt, status 'OPEN'|'DONE'|'SKIPPED', doneAt, closedBy,
          systemId, systemName, ruleId, refId(id ล็อตของงานใส่ราคา), isDue(ถึงเวลาแล้ว), overdueDays(0 = วันนี้),
          canComplete(กดเสร็จเองได้), count(เช็คปู: จำนวนปูที่ถึงรอบ) }
-kind = WATER_TEST | FEEDING | CRAB_CHECK | MICROBES | FRESHWATER | FILTER | CUSTOM | LOT_COST
+kind = WATER_TEST | FEEDING | CRAB_CHECK | MICROBES | FRESHWATER | FILTER | CUSTOM | LOT_COST | FEED_LOW
 Rule = { id, systemId, kind, defaultKey, locked, title, icon, priority, repeat(+'FEEDING_PLAN'), everyDays, weekdays: number[],
          timeOfDay, active, nextDueAt(รอบถัดไป · เช็คปู = พักเตือนถึง), lastDoneAt, createdAt }
 ```
 
+## อาหารปู (P4) — `/feed` · ต้องมีสิทธิ์ใช้งาน · ของคนอื่น = 404
+
+สต็อก (ต่อเจ้าของ ใช้ร่วมทุกระบบ) · แผน (ต่อระบบ) · รอบให้อาหาร (1 ระบบเปิดได้ทีละรอบ) · ผลการกินรายตัว
+อาหารเริ่มต้น "ปลา 🐟" / "หอย 🐚" หน่วยชิ้น (สร้างให้ตอนใช้ครั้งแรก) · **ไม่บังคับใส่สต็อก**: ยังไม่เคยซื้อ/นับ (`stockSet=false`) = ไม่ตัดสต็อก ไม่เตือนใกล้หมด
+
+**ชีวิตของรอบ:** เปิดเองเมื่อถึงเวลาให้อาหาร (หรือกด "เริ่ม") — ทุกตัวได้แถวผลการกินเป็น `ATE` ตั้งแต่เปิด → `fed` (แจ้งเตือน "ให้อาหารปู" ปิดเอง) → แตะเฉพาะตัวที่ไม่กิน/กินน้อย → `close` (ตัดสต็อกจากแถวรายตัว)
+**ลืมปิด:** ถึงเวลารอบใหม่แล้วรอบเก่ายังเปิด → ปิดให้เอง (`autoClosed`, `reviewPending`) แล้วถามยืนยัน: `ok` / แก้ย้อนหลัง (PATCH entries) / `not_fed` (รอบเป็น SKIPPED คืนสต็อก ลบผลการกิน)
+ไม่ได้เปิดแอปหลายวัน = เปิดเฉพาะรอบล่าสุด ไม่สร้างรอบย้อนหลัง · ไม่สร้างรอบของเวลาก่อนมีแผน
+
+| Method | Path | หมายเหตุ |
+|---|---|---|
+| GET | `/feed/items` | `[{ id, name, emoji, unit, qty, stockSet, active, sortOrder, forecast: { used, rounds(พออีกกี่รอบ), runsOutOn('YYYY-MM-DD' \| null = พอเกิน 30 วัน), perRound, low(< 2 รอบ) } }]` |
+| POST | `/feed/items` | `{ name, emoji?, unit?('ชิ้น') }` → `{ id }` · ชื่อซ้ำ = 400 (ที่เคยลบ = เอากลับมา) |
+| PATCH | `/feed/items/:id` | `{ name?, emoji?, unit?, active? }` · ลบ (`active:false`) อาหารที่อยู่ในแผน = 400 |
+| POST | `/feed/items/:id/buy` | `{ qty>0, priceTHB?, note? }` → 204 · ครั้งแรก = เริ่มนับสต็อกจากตรงนี้ |
+| POST | `/feed/items/:id/count` | `{ qty≥0 }` นับใหม่ (มีจริงเท่านี้) → 204 · เก็บส่วนต่างเป็น ADJUST |
+| GET | `/feed/items/:id/moves` | 40 รายการล่าสุด `[{ kind 'BUY'\|'USE'\|'ADJUST', qty(±), priceTHB, note, at, round: { feedDate, systemName } \| null }]` |
+| GET | `/feed/plan?systemId` | `{ plan \| null, crabs, preview: 14 วัน [{ date, feed, skip, itemId, override, dueAt, need }] }` |
+| PUT | `/feed/plan` | `{ systemId, onDays(1–14), offDays(0–14 · 0=ทุกวัน), anchorDate?('YYYY-MM-DD' ไม่ส่ง = วันนี้), timeOfDay, pattern 'SINGLE'\|'ALTERNATE', itemId, altItemId?(ALTERNATE บังคับ ต่างจาก itemId), piecesPerCrab(0–20), active? }` → เหมือน GET |
+| PUT | `/feed/plan/day` | `{ systemId, date, skip, itemId \| null }` ปรับวันเดียว · ทั้งคู่ว่าง = กลับไปตามแผน · `skip` วันที่มีรอบเปิดแต่ยังไม่ให้ = รอบนั้นเป็น SKIPPED |
+| GET | `/feed/current?systemId` | (เรียก sync ก่อน) `{ plan, items, round: { id, feedDate, dueAt, fedAt, entries:[{crabId,boxId,itemId,pieces,result}] } \| null, next: { date, dueAt, itemId, pieces, crabs, need } \| null, shortages:[{itemId,need,have}], review:[{id,feedDate,dueAt,fedAt,total,little,none}], last: { roundId, feedDate, results:[{crabId,result}](เฉพาะไม่กิน/กินน้อย) } \| null }` |
+| GET | `/feed/rounds?systemId&take(≤60)` | ล่าสุดก่อน `[{ id, feedDate, dueAt, status, fedAt, closedAt, autoClosed, reviewPending, total, little, none, food:[{itemId,qty}] }]` |
+| GET | `/feed/rounds/:id` | รอบ + `entries[{ crabId, boxId, itemId, pieces, result, crabName, boxCode, side }]` เรียงด้าน/แถว/ช่อง |
+| POST | `/feed/rounds/start` | `{ systemId }` → 201 `{ id }` รอบของวันนี้ (ก่อนเวลา/นอกแผนได้) · วันนี้ปิดไปแล้ว = 400 · รอบเก่าที่ยังเปิด = ปิดให้ (autoClosed) |
+| POST | `/feed/rounds/:id/fed` | "ให้อาหารแล้ว" → 204 |
+| POST | `/feed/rounds/:id/close` | "เสร็จแล้ว" → 204 ตัดสต็อก · ปิดซ้ำ = 400 |
+| POST | `/feed/rounds/:id/review` | `{ action: 'ok' \| 'not_fed' }` → 204 |
+| PATCH | `/feed/rounds/:id/entries` | **อย่างใดอย่างหนึ่ง** `{ crabIds[], result? , itemId?, pieces? }` (ปูที่ยังไม่มีแถว = สร้างให้) หรือ `{ fromItemId, itemId }` (ของไม่พอ → เปลี่ยนทั้งรอบ) → 204 · รอบที่ปิดแล้วแก้ได้ ≤ 30 วัน (สต็อกคำนวณใหม่ + ล้าง reviewPending) |
+
+`EatResult = 'ATE' | 'LITTLE' | 'NONE'` · งานแจ้งเตือนที่ผูกกับอาหาร: `FEEDING` (มีเมื่อรอบเปิดแต่ยังไม่ `fed` · กด "เสร็จแล้ว" ที่งาน = `fed` ให้) · `FEED_LOW` (พอไม่ถึง 2 รอบ · ปิดเองเมื่อซื้อ/นับใหม่ · กดเสร็จเองไม่ได้)
+⚠ ใหม่: `feeding_plan_missing` (menu `feed`, target `feed-plan`) · `feed_stock_missing` (`feed`, `feed-stock`) · `feed_low` (`feed`, `feed-stock`, count) · `feeding_review` (`crabs`, `crabs-feed-review`, count)
+
+## Realtime (WebSocket) — `ws(s)://<api-host>/ws`
+ต่อด้วย subprotocol `['jwt', <accessToken>]` (ผิด/หมดอายุ = ปิดด้วย 4401 → refresh แล้วต่อใหม่) · server ส่ง `{ t:'hello' }`
+client ส่ง `{ t:'subscribe', systemId }` (ระบบของตัวเองเท่านั้น — ไม่ใช่ = `{ t:'error' }`) / `{ t:'unsubscribe', systemId }` / `{ t:'ping' }`
+server "เคาะ" `{ t:'feeding.changed', systemId }` ทุกครั้งที่รอบ/ผลการกินเปลี่ยน → client ไป `GET /feed/current` ใหม่ (ไม่มี payload — หลุดก็ไม่เพี้ยน)
+`GET /health` → `realtime: { enabled, path }` · ปิดด้วย `REALTIME_ENABLED=false` (หน้าเว็บถอยไป polling 20 วิ)

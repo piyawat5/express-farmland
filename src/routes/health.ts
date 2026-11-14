@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { asyncHandler } from '../lib/http';
+import { realtimeInfo } from '../lib/realtime';
 
 const router = Router();
 
@@ -10,8 +11,8 @@ router.get('/health', (_req, res) => {
     service: 'express-farmland',
     version: 2,
     time: new Date().toISOString(),
-    // realtime (WebSocket) จะกลับมาใน P4 พร้อมรอบให้อาหาร
-    realtime: { enabled: false, path: null },
+    // realtime (WebSocket) ซิงค์รอบให้อาหารหลายเครื่อง — หน้าเว็บอ่านค่านี้ก่อนต่อ (ปิด = ใช้ polling)
+    realtime: realtimeInfo(),
   });
 });
 
