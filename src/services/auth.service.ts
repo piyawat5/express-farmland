@@ -6,6 +6,7 @@ import { prisma } from '../lib/prisma';
 import { env } from '../config/env';
 import { AppError, badRequest } from '../lib/http';
 import { getAccess } from './subscription.service';
+import { parseHours } from './reminders/schedule';
 
 // ════════════════════════════════════════════════════════════════════
 //  Auth — register / login / refresh / logout / me
@@ -84,6 +85,8 @@ export const publicUser = (u: User) => ({
   avatarUrl: u.avatarUrl,
   notifyEmail: u.notifyEmail,
   weightUnit: u.weightUnit,
+  /** ชั่วโมงที่ส่งอีเมลสรุปงานค้าง เช่น [8, 12, 16, 20] */
+  emailHours: parseHours(u.emailHours),
   hasPassword: !!u.passwordHash,
   /** อีเมลเทียมของ LINE/Facebook ที่ไม่ให้อีเมล — หน้าเว็บไม่ควรโชว์/ใช้ส่งเมล */
   emailIsPlaceholder: u.email.endsWith('@oauth.local'),
@@ -163,13 +166,14 @@ export async function getMe(userId: number) {
 
 export async function updateProfile(
   userId: number,
-  input: { name?: string | null; notifyEmail?: string | null; weightUnit?: WeightUnit },
+  input: { name?: string | null; notifyEmail?: string | null; weightUnit?: WeightUnit; emailHours?: number[] },
 ) {
   const data: Prisma.UserUpdateInput = {};
   if (input.name !== undefined) data.name = input.name?.trim() || null;
   // เว้นว่าง = ไม่ส่งอีเมลแจ้งเตือน
   if (input.notifyEmail !== undefined) data.notifyEmail = input.notifyEmail?.trim().toLowerCase() || null;
   if (input.weightUnit !== undefined) data.weightUnit = input.weightUnit;
+  if (input.emailHours !== undefined) data.emailHours = parseHours(input.emailHours.join(',')).join(',');
   await prisma.user.update({ where: { id: userId }, data });
   return getMe(userId);
 }

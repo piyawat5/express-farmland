@@ -62,9 +62,6 @@ const schema = z.object({
     .string()
     .default('false')
     .transform((v) => v === 'true'),
-  // เว้นช่วงเมลสรุป: ต่อให้ cron วิ่งถี่ เมลสรุปจะส่งซ้ำเร็วสุดทุกกี่นาที
-  // (งานใหม่ที่ยังไม่เคยเตือน จะเด้งทันทีโดยไม่รอครบรอบ)
-  DIGEST_MIN_INTERVAL_MIN: z.coerce.number().int().min(0).default(60),
 
   // Realtime (WebSocket) — ใช้ซิงค์ "รอบให้อาหาร" ระหว่างคนที่ช่วยกันบันทึก (Phase 21)
   // ตั้ง false = kill switch (เผื่อ Plesk/Passenger ไม่ proxy upgrade) → หน้าเว็บถอยไป polling เอง

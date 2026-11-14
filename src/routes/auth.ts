@@ -70,6 +70,8 @@ const profileBody = z.object({
   // เว้นว่าง ('' หรือ null) = ไม่ส่งอีเมลแจ้งเตือน
   notifyEmail: z.union([z.string().email('อีเมลไม่ถูกต้อง'), z.literal(''), z.null()]).optional(),
   weightUnit: z.enum(['KHIT', 'GRAM']).optional(),
+  // ชั่วโมงส่งอีเมลสรุปงานค้าง (ว่าง = ไม่ส่งตามเวลา)
+  emailHours: z.array(z.number().int().min(0).max(23)).max(24).optional(),
 });
 
 /** แก้โปรไฟล์ตัวเอง: ชื่อ / อีเมลรับแจ้งเตือน / หน่วยน้ำหนัก */

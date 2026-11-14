@@ -5,7 +5,7 @@
 //  เพิ่มทีละเฟส:
 //    P1            บัญชีผู้ใช้ · แพ็กเกจ/สมาชิก · สลิปโอนเงิน · ตั้งค่าร้าน
 //    P2            ระบบปู · กล่อง · คู่ค้า · ล็อต · ปู · การเช็คปู
-//    P3            แจ้งเตือน (กฎ/งาน/อีเมล)
+//    P3            แจ้งเตือน (กฎ/งาน/อีเมลตามเวลา)
 //    P4–P9         อาหาร · น้ำ · ขาย/บัญชี · ชุมชน · หมู่บ้านฟาร์ม
 // ════════════════════════════════════════════════════════════════════
 
@@ -38,6 +38,10 @@ model User {
   notifyEmail  String?
   /// หน่วยน้ำหนักที่แสดงทั้งระบบ — ข้อมูลเก็บเป็นกรัมเสมอ
   weightUnit   WeightUnit @default(KHIT)
+  /// ชั่วโมงที่ส่งอีเมลสรุปงานค้าง (P3) เช่น "8,12,16,20" — ว่าง = ไม่ส่งตามเวลา
+  emailHours   String     @default("8,12,16,20")
+  /// ส่งอีเมลสรุปครั้งล่าสุด (กันส่งซ้ำในชั่วโมงเดียวกัน — scheduler วิ่งทุก 15 นาที)
+  lastDigestAt DateTime?
   /// ค่าส่วนตัวของหน้าเว็บ { themeFamily, themeMode, sound, reduceMotion, dashboard, tours } — ห้ามส่งให้คนอื่นเห็น
   uiPrefs      Json?
   lastLoginAt  DateTime?
@@ -56,6 +60,10 @@ model User {
   contacts    Contact[]
   crabLots    CrabLot[]
   crabs       Crab[]
+
+  // ── แจ้งเตือน (P3) ──
+  reminderRules ReminderRule[]
+  tasks         Task[]
 }
 
 enum Role {
@@ -205,9 +213,11 @@ model CrabSystem {
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 
-  boxes CrabBox[]
-  lots  CrabLot[]
-  crabs Crab[]
+  boxes         CrabBox[]
+  lots          CrabLot[]
+  crabs         Crab[]
+  reminderRules ReminderRule[]
+  tasks         Task[]
 
   @@index([ownerId])
 }
@@ -368,4 +378,107 @@ model CrabCheck {
   updatedAt     DateTime @updatedAt
 
   @@index([crabId, checkedAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  แจ้งเตือน (P3) — กฎ (ทำอะไร ทุกเมื่อไร สำคัญแค่ไหน) → งาน (1 รอบที่ต้องทำ)
+//  - กฎ 1 ข้อมีงานเปิดได้ทีละ 1 งาน (Task.openKey) — ไม่ทำก็แค่ "เลยมา N วัน" ไม่กองซ้อน
+//  - รอบถัดไปนับจากวันที่ทำจริง (บทเรียน v1: นับจากวันครบกำหนดเดิมแล้วงานเด้งถี่เกิน)
+//  - ค่าเริ่มต้น 6 เรื่องสร้างตอนสร้างระบบปู (defaultKey) ลบไม่ได้ ได้แค่ปิด/ปรับรอบ/ปรับความสำคัญ
+// ─────────────────────────────────────────────────────────────────────
+
+model ReminderRule {
+  id         Int          @id @default(autoincrement())
+  owner      User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId    Int
+  system     CrabSystem   @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId   Int
+  kind       ReminderKind
+  /// ค่าเริ่มต้นของระบบ (= ชื่อ kind) ลบไม่ได้ · เรื่องที่ผู้ใช้เพิ่มเอง = null
+  defaultKey String?
+  title      String
+  /// อีโมจิหน้าเรื่อง
+  icon       String?
+  priority   Priority
+  repeat     RepeatType
+  /// ทุกกี่วัน (EVERY_DAYS) — งานเช็คปูใช้เป็น "รอบเช็คปูแต่ละตัว"
+  everyDays  Int?
+  /// วันในสัปดาห์ (WEEKDAYS) เช่น "1,4" — 0 = อาทิตย์
+  weekdays   String?
+  /// เวลาครบกำหนดในวันนั้น "HH:mm"
+  timeOfDay  String       @default("08:00")
+  active     Boolean      @default(true)
+  /// รอบถัดไป (= dueAt ของงานที่เปิดอยู่ ถ้ามี) · null = ปิดอยู่/ยังไม่มีรอบ
+  /// งานเช็คปู: ใช้เป็น "พักเตือนถึง" หลังกดเสร็จแล้ว
+  nextDueAt  DateTime?
+  lastDoneAt DateTime?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  tasks Task[]
+
+  @@unique([systemId, defaultKey])
+  @@index([ownerId, active, nextDueAt])
+}
+
+/// งาน 1 รอบ — "วันนี้" = งานที่ยังเปิด (OPEN) · ประวัติ = งานที่ปิดแล้ว
+model Task {
+  id        Int           @id @default(autoincrement())
+  owner     User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId   Int
+  system    CrabSystem?   @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId  Int?
+  rule      ReminderRule? @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  ruleId    Int?
+  kind      ReminderKind
+  title     String
+  priority  Priority
+  dueAt     DateTime
+  status    TaskStatus    @default(OPEN)
+  doneAt    DateTime?
+  closedBy  TaskCloser?
+  /// กันงานซ้ำตอนสองเครื่องเปิดพร้อมกัน: มีค่าเฉพาะตอนงานยังเปิด ("rule:12" / "lot:5") ปิดแล้ว = null
+  openKey   String?       @unique
+  /// อ้างอิงของงานอัตโนมัติ เช่น id ล็อตของงาน "ใส่ราคาล็อต"
+  refId     Int?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([ownerId, status, dueAt])
+  @@index([ruleId, status])
+}
+
+enum ReminderKind {
+  WATER_TEST // วัดค่าน้ำ (P5 ปิดเองเมื่อบันทึกค่าน้ำ)
+  FEEDING // รอบให้อาหาร (P4 ตามแผนให้อาหาร)
+  CRAB_CHECK // เช็คเนื้อ/ไข่ปู — มีงานเมื่อมีปูถึงรอบ ปิดเองเมื่อเช็คครบ
+  MICROBES // ใส่จุลินทรีย์
+  FRESHWATER // เติมน้ำจืด
+  FILTER // เปลี่ยนใยกรองละเอียด
+  CUSTOM // เรื่องที่ผู้ใช้ตั้งเอง
+  LOT_COST // งานอัตโนมัติ: ใส่ราคาล็อต (ไม่มีกฎ ปิดเองเมื่อใส่ราคา)
+}
+
+enum Priority {
+  HIGH // ด่วนมาก — ป๊อปอัปทุก 1 ชม. จนกว่าจะทำ
+  MEDIUM // ปานกลาง
+  LOW // ทั่วไป
+}
+
+enum RepeatType {
+  EVERY_DAYS // ทุก N วัน (นับจากวันที่ทำจริง)
+  WEEKDAYS // ทุกวันจันทร์/พฤหัส ฯลฯ
+  ONCE // ครั้งเดียว
+  FEEDING_PLAN // ตามแผนให้อาหาร (P4)
+}
+
+enum TaskStatus {
+  OPEN
+  DONE
+  SKIPPED
+}
+
+enum TaskCloser {
+  USER // ผู้ใช้กดเสร็จ/ข้าม
+  AUTO // ระบบปิดให้ (บันทึกจริงแล้ว / ใส่ราคาแล้ว / ไม่มีปูถึงรอบแล้ว)
 }

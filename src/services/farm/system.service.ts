@@ -3,6 +3,8 @@ import { prisma } from '../../lib/prisma';
 import { badRequest } from '../../lib/http';
 import { assertOwned } from '../../lib/scope';
 import type { AuthUser } from '../auth.service';
+import { defaultRulesData } from '../reminders/defaults';
+import { checkEveryDays } from '../reminders/rule.service';
 
 // ════════════════════════════════════════════════════════════════════
 //  ระบบปู + ผังกล่อง
@@ -82,6 +84,8 @@ export async function createSystem(user: AuthUser, input: { name: string; layout
     await tx.crabBox.createMany({
       data: wantedBoxes(input.layout, input.rows, input.cols).map((b) => ({ ...b, systemId: system.id })),
     });
+    // แจ้งเตือนเริ่มต้น 6 เรื่อง (ข้อ 4.4.4)
+    await tx.reminderRule.createMany({ data: defaultRulesData(user.id, system.id, new Date()) });
     return { ...system, aliveCrabs: 0 };
   });
 }
@@ -147,7 +151,7 @@ export async function getSystemGrid(user: AuthUser, id: number) {
     user,
     'ระบบปูนี้',
   );
-  const [boxes, crabs] = await Promise.all([
+  const [boxes, crabs, checkDays] = await Promise.all([
     prisma.crabBox.findMany({
       where: { systemId: id, active: true },
       orderBy: [{ side: 'asc' }, { row: 'asc' }, { col: 'asc' }],
@@ -171,10 +175,13 @@ export async function getSystemGrid(user: AuthUser, id: number) {
         lot: { select: { id: true, receivedAt: true, totalCost: true } },
       },
     }),
+    checkEveryDays(id),
   ]);
   const { ownerId: _o, ...sys } = system;
   return {
     system: sys,
+    /** รอบเช็คเนื้อ/ไข่ (วัน) จากแจ้งเตือน "เช็คเนื้อ/ไข่ปู" — null = ปิดเรื่องนี้ไว้ (ไม่ขึ้น ⚠ ถึงรอบ) */
+    checkEveryDays: checkDays,
     boxes,
     crabs: crabs.map(({ lot, ...c }) => ({
       ...c,

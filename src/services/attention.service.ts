@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma';
 import type { AuthUser } from './auth.service';
+import { dueSummary } from './reminders/task.service';
 
 // ════════════════════════════════════════════════════════════════════
 //  ป้าย ⚠ นำทาง — รวม "สิ่งที่ยังไม่ได้ทำ/ยังไม่ได้ตั้งค่า" ไว้ที่เดียว
@@ -28,13 +29,27 @@ export type AttentionItem = {
 
 export async function getAttention(user: AuthUser): Promise<AttentionItem[]> {
   const items: AttentionItem[] = [];
-  const [me, systems, lotsNoCost, crabs] = await Promise.all([
+  const [me, systems, lotsNoCost, crabs, due] = await Promise.all([
     prisma.user.findUnique({ where: { id: user.id }, select: { notifyEmail: true } }),
     prisma.crabSystem.count({ where: { ownerId: user.id } }),
     // ล็อตที่มีปูแล้วแต่ยังไม่ใส่ราคา (ลืมแล้วไปเจอตอนขาย = ปัญหาใหญ่ใน v1)
     prisma.crabLot.count({ where: { ownerId: user.id, totalCost: null, crabs: { some: { deletedAt: null } } } }),
     prisma.crab.count({ where: { ownerId: user.id, deletedAt: null } }),
+    dueSummary(user.id),
   ]);
+
+  // งานแจ้งเตือนที่ถึงเวลาแล้ว (P3) — มีงานด่วน = urgent (หน้าเว็บเด้งป๊อปอัปทุก 1 ชม.)
+  if (due.total > 0) {
+    items.push({
+      key: 'tasks_due',
+      level: due.high > 0 ? 'urgent' : 'warn',
+      menu: 'reminders',
+      target: 'reminders-today',
+      title: due.high > 0 ? `มีงานด่วน ${due.high} เรื่องที่ยังไม่ได้ทำ` : `มีงานที่ต้องทำ ${due.total} เรื่อง`,
+      cta: 'ดูงาน',
+      count: due.total,
+    });
+  }
 
   if (systems === 0) {
     items.push({

@@ -54,6 +54,37 @@ export async function sendNotificationEmail(input: SendMailInput) {
   });
 }
 
+/** escape ข้อความที่ผู้ใช้พิมพ์เอง ก่อนใส่ลง HTML ของอีเมล */
+export const escapeHtml = (s: string) =>
+  s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+/** กรอบอีเมล v2 (สีหลัก teal เหมือนหน้าเว็บ) — innerHtml ต้อง escape ข้อความผู้ใช้มาแล้ว */
+export function renderEmailHtml(innerHtml: string, heading: string): string {
+  return `
+  <div style="font-family: Kanit, Tahoma, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; padding: 16px; background-color: #f0fdfa;">
+    <div style="background-color: #ffffff; padding: 24px; border-radius: 14px; border: 1px solid #ccfbf1;">
+      <div style="text-align: center; margin-bottom: 18px;">
+        <div style="font-size: 30px;">🦀</div>
+        <h1 style="color: #0f766e; margin: 4px 0 0; font-size: 22px;">${escapeHtml(heading)}</h1>
+      </div>
+      ${innerHtml}
+      <div style="margin-top: 24px; padding-top: 14px; border-top: 1px solid #eee; text-align: center; color: #94a3b8; font-size: 12px;">
+        ส่งอัตโนมัติจากระบบจัดการปู · ตั้งเวลาส่ง/ปิดอีเมลได้ที่เมนูบัญชี &amp; การแจ้งเตือน
+      </div>
+    </div>
+  </div>`;
+}
+
+/** ส่งอีเมล HTML ที่ประกอบเองแล้ว (สรุปงานค้าง) */
+export async function sendHtmlEmail(input: { to: string; subject: string; heading: string; html: string }) {
+  return transporter.sendMail({
+    from: env.MAIL_FROM ?? env.EMAIL_USER,
+    to: input.to,
+    subject: input.subject,
+    html: renderEmailHtml(input.html, input.heading),
+  });
+}
+
 /** ตรวจว่าเชื่อมต่อ SMTP ได้ไหม (ใช้ตอน startup / debug) */
 export async function verifyMailer(): Promise<boolean> {
   try {
