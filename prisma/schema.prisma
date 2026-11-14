@@ -3,8 +3,8 @@
 //  แผนเต็ม: docs/v2-plan.md · schema v1 อยู่ที่ tag v1-final
 //
 //  เพิ่มทีละเฟส:
-//    P1 (ไฟล์นี้)  บัญชีผู้ใช้ · แพ็กเกจ/สมาชิก · สลิปโอนเงิน · ตั้งค่าร้าน
-//    P2            ระบบปู · กล่อง · ล็อต · ปู · การเช็คปู
+//    P1            บัญชีผู้ใช้ · แพ็กเกจ/สมาชิก · สลิปโอนเงิน · ตั้งค่าร้าน
+//    P2            ระบบปู · กล่อง · คู่ค้า · ล็อต · ปู · การเช็คปู
 //    P3            แจ้งเตือน (กฎ/งาน/อีเมล)
 //    P4–P9         อาหาร · น้ำ · ขาย/บัญชี · ชุมชน · หมู่บ้านฟาร์ม
 // ════════════════════════════════════════════════════════════════════
@@ -44,12 +44,18 @@ model User {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  oauthAccounts       OAuthAccount[]
-  refreshTokens       RefreshToken[]
-  subscriptions       Subscription[]  @relation("SubscriptionUser")
+  oauthAccounts        OAuthAccount[]
+  refreshTokens        RefreshToken[]
+  subscriptions        Subscription[] @relation("SubscriptionUser")
   grantedSubscriptions Subscription[] @relation("SubscriptionGrantedBy")
-  paymentSlips        PaymentSlip[]   @relation("SlipUser")
-  reviewedSlips       PaymentSlip[]   @relation("SlipReviewer")
+  paymentSlips         PaymentSlip[]  @relation("SlipUser")
+  reviewedSlips        PaymentSlip[]  @relation("SlipReviewer")
+
+  // ── ฟาร์ม (P2) — ข้อมูลฟาร์มเห็นได้เฉพาะเจ้าของ (แอดมินก็ไม่เห็นฟาร์มลูกค้า) ──
+  crabSystems CrabSystem[]
+  contacts    Contact[]
+  crabLots    CrabLot[]
+  crabs       Crab[]
 }
 
 enum Role {
@@ -178,4 +184,188 @@ model AppSetting {
   key       String   @id
   value     Json
   updatedAt DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  ฟาร์ม (P2) — ระบบปู · กล่อง · คู่ค้า · ล็อต · ปู · การเช็คปู
+// ─────────────────────────────────────────────────────────────────────
+
+/// ระบบปู = ชุดเลี้ยง 1 ชุด (ระบบน้ำ/กรองแยกกัน = คนละระบบ)
+model CrabSystem {
+  id        Int          @id @default(autoincrement())
+  owner     User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId   Int
+  name      String
+  layout    SystemLayout
+  /// จำนวนชั้น (คอนโด) หรือจำนวนแถว (ตะกร้า) — ต่อด้าน
+  rows      Int
+  /// จำนวนช่องต่อชั้น — ต่อด้าน
+  cols      Int
+  sortOrder Int          @default(0)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  boxes CrabBox[]
+  lots  CrabLot[]
+  crabs Crab[]
+
+  @@index([ownerId])
+}
+
+enum SystemLayout {
+  BASKET // ตะกร้าดำ
+  CONDO_SINGLE // ปูคอนโดด้านเดียว
+  CONDO_DOUBLE // ปูคอนโดหันหลังชนกัน (มีด้านหน้า + ด้านหลัง)
+}
+
+/// กล่อง/ตะกร้า 1 ช่อง — รหัสแบบ A1 (แถว A = ชั้นบนสุด) ไม่ซ้ำภายในด้านเดียวกัน
+model CrabBox {
+  id        Int        @id @default(autoincrement())
+  system    CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId  Int
+  side      BoxSide    @default(FRONT)
+  row       Int // 0 = ชั้นบนสุด
+  col       Int // 0 = ซ้ายสุด (มองจากด้านที่ยืน)
+  code      String
+  /// false = ถูกลดขนาดผังออกไปแล้ว (เก็บแถวไว้เพราะมีประวัติปูอ้างถึง)
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now())
+
+  crabs Crab[]
+
+  @@unique([systemId, side, row, col])
+  @@unique([systemId, side, code])
+}
+
+enum BoxSide {
+  FRONT
+  BACK
+}
+
+/// คู่ค้า: คนขายปูให้เรา (SELLER) / ลูกค้าที่ซื้อปู (CUSTOMER — ใช้ใน P6)
+model Contact {
+  id        Int         @id @default(autoincrement())
+  owner     User        @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId   Int
+  type      ContactType
+  name      String
+  phone     String?
+  note      String?     @db.Text
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  lots CrabLot[]
+
+  @@index([ownerId, type])
+}
+
+enum ContactType {
+  SELLER
+  CUSTOMER
+}
+
+/// ล็อตปู = ปูที่ซื้อเข้ามาพร้อมกัน 1 ครั้ง — ปูทุกตัวต้องอยู่ในล็อต (กันลืมใส่ต้นทุน)
+model CrabLot {
+  id            Int        @id @default(autoincrement())
+  owner         User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId       Int
+  system        CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId      Int
+  seller        Contact?   @relation(fields: [sellerId], references: [id], onDelete: SetNull)
+  sellerId      Int?
+  receivedAt    DateTime
+  /// ราคาที่จ่ายทั้งล็อต — null = ยังไม่ได้ใส่ (ขึ้น ⚠ จนกว่าจะใส่)
+  totalCost     Decimal?   @db.Decimal(12, 2)
+  costEnteredAt DateTime?
+  note          String?    @db.Text
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  crabs Crab[]
+
+  @@index([ownerId, receivedAt])
+}
+
+/// ปู 1 ตัว — ค่า last* เป็นสำเนาจากการเช็คล่าสุด (ไว้วาดผังกล่องเร็วๆ ไม่ต้อง join)
+model Crab {
+  id            Int        @id @default(autoincrement())
+  owner         User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId       Int
+  system        CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId      Int
+  box           CrabBox?   @relation(fields: [boxId], references: [id], onDelete: SetNull)
+  boxId         Int?
+  // Cascade เพื่อให้ลบบัญชีผู้ใช้ได้ (การลบล็อตที่ยังมีปูถูกกันไว้ใน lot.service แล้ว)
+  lot           CrabLot    @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  lotId         Int
+  /// รหัสไม่ซ้ำต่อเจ้าของ (C0001) — ซ่อนจากหน้าจอ ชื่อซ้ำกันได้
+  code          String
+  /// ค่าเริ่มต้น = รหัสกล่อง เช่น "A1"
+  name          String
+  type          CrabType
+  sex           CrabSex?
+  grade         CrabGrade?
+  cableTieColor String?
+  status        CrabStatus @default(ALIVE)
+  /// ต้นทุนของตัวนี้ (แบ่งจากราคาล็อตตามน้ำหนักให้อัตโนมัติ)
+  allocatedCost Decimal?   @db.Decimal(12, 2)
+  lastWeightG   Decimal?   @db.Decimal(8, 1)
+  /// % ไข่ (ปูไข่) หรือ % เนื้อ (ปูเนื้อ)
+  lastPct       Int?
+  lastPhotoUrl  String?    @db.Text
+  lastCheckedAt DateTime?
+  diedAt        DateTime?
+  note          String?    @db.Text
+  /// ลบเพราะบันทึกผิด (ไม่ใช่ตาย/ขาย) — ซ่อนจากทุกหน้า
+  deletedAt     DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  checks CrabCheck[]
+
+  @@unique([ownerId, code])
+  @@index([systemId, status, deletedAt])
+  @@index([lotId])
+}
+
+enum CrabType {
+  EGG // ปูไข่
+  MEAT // ปูเนื้อ
+  SOFT // ปูนิ่ม
+}
+
+enum CrabSex {
+  MALE // ผู้
+  FEMALE // เมีย
+  INTERSEX // กะเทย
+}
+
+enum CrabGrade {
+  A // สมบูรณ์
+  B // ไม่สมบูรณ์
+}
+
+enum CrabStatus {
+  ALIVE // ยังเลี้ยงอยู่
+  SOLD // ขายแล้ว (P6)
+  DEAD // ตาย
+}
+
+/// การเช็คปู 1 ครั้ง (ชั่ง/ส่องไข่/ถ่ายรูป) — "เช็ควันนี้" = เพิ่มแถวใหม่เสมอ ไม่ทับของเดิม
+model CrabCheck {
+  id            Int      @id @default(autoincrement())
+  crab          Crab     @relation(fields: [crabId], references: [id], onDelete: Cascade)
+  crabId        Int
+  checkedAt     DateTime
+  weightG       Decimal? @db.Decimal(8, 1)
+  pct           Int?
+  /// % ที่ AI ประเมินจากรูป (เก็บคู่กับค่าที่ผู้ใช้ยืนยัน → รู้ว่า AI แม่นแค่ไหน)
+  aiPct         Int?
+  photoUrl      String?  @db.Text
+  photoPublicId String?
+  note          String?  @db.Text
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([crabId, checkedAt])
 }

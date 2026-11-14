@@ -6,6 +6,7 @@ import billingRoutes, { publicShopHandler } from './billing';
 import uploadRoutes from './uploads';
 import adminRoutes from './admin';
 import attentionRoutes from './attention';
+import { contactRouter, crabCheckRouter, crabRouter, eggAiRouter, lotRouter, systemRouter } from './farm';
 
 // ════════════════════════════════════════════════════════════════════
 //  ลำดับชั้นสิทธิ์ (สำคัญ — เพิ่ม route ใหม่ให้ถูกชั้น):
@@ -30,5 +31,12 @@ api.use('/admin', requireAdmin, adminRoutes);
 // ── 3. ต้องมีสิทธิ์ใช้งาน ────────────────────────────────────────────────
 api.use(requireActiveSubscription);
 api.use('/attention', attentionRoutes);
+// ฟาร์ม (P2)
+api.use('/systems', systemRouter);
+api.use('/contacts', contactRouter);
+api.use('/lots', lotRouter);
+api.use('/crabs', crabRouter);
+api.use('/crab-checks', crabCheckRouter);
+api.use('/egg-ai', eggAiRouter);
 
 export default api;
