@@ -7,7 +7,8 @@
 //    P2            ระบบปู · กล่อง · คู่ค้า · ล็อต · ปู · การเช็คปู
 //    P3            แจ้งเตือน (กฎ/งาน/อีเมลตามเวลา)
 //    P4            อาหาร (สต็อก · แผน · รอบให้อาหาร · ผลการกินรายตัว)
-//    P5–P9         น้ำ · ขาย/บัญชี · ชุมชน · หมู่บ้านฟาร์ม
+//    P5            น้ำ (ค่าที่วัด · กฎปรุงน้ำ · ผลวัด)
+//    P6–P9         ขาย/บัญชี · ชุมชน · หมู่บ้านฟาร์ม
 // ════════════════════════════════════════════════════════════════════
 
 generator client {
@@ -71,6 +72,12 @@ model User {
   feedMoves     FeedStockMove[]
   feedingPlans  FeedingPlan[]
   feedingRounds FeedingRound[]
+
+  // ── น้ำ (P5) ──
+  waterParams     WaterParam[]
+  waterSubstances WaterSubstance[]
+  waterTests      WaterTest[]
+  waterActions    WaterAction[]
 }
 
 enum Role {
@@ -227,6 +234,9 @@ model CrabSystem {
   tasks         Task[]
   feedingPlan   FeedingPlan?
   feedingRounds FeedingRound[]
+  waterParams   WaterParam[]
+  waterTests    WaterTest[]
+  waterActions  WaterAction[]
 
   @@index([ownerId])
 }
@@ -659,4 +669,143 @@ enum EatResult {
   ATE // กินหมด
   LITTLE // กินน้อย
   NONE // ไม่กิน
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  น้ำ (P5) — ค่าที่วัด (ต่อระบบ) · กฎปรุงน้ำ (ต่อค่า: ต่ำ/สูง) · สาร (ต่อเจ้าของ) · ผลวัด · "ทำแล้ว"
+//  - ค่าที่วัดเพิ่มเองได้ · ผลวัดเก็บแยกแถว (WaterReading) → เพิ่มค่าใหม่ไม่ต้อง migrate
+//  - เกณฑ์ = ต่ำสุด/สูงสุดของค่านั้น · กฎใช้เกณฑ์เดียวกัน ("ถ้า Mg ต่ำกว่า [ต่ำสุด] → ...")
+//  - ใส่สาร = calibration ต่อระบบ (น้ำแต่ละระบบไม่เท่ากัน): "ใส่ [สาร] [1] [ช้อน] ค่าจะขึ้น [2]"
+//    จำนวนที่ต้องใส่ = ระยะถึงเป้า ÷ (ค่าที่ขึ้น ÷ จำนวน) · ต่ำ → ดันถึงสูงสุด · สูง → ลดถึงต่ำสุด
+//  - ค่าที่รอบนี้ไม่ได้วัด = ใช้ค่าล่าสุดที่เคยวัด (บอกว่าเป็นค่าเดิม)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ค่าที่วัด 1 อย่างของระบบ — ค่าเริ่มต้น 8 อย่าง (key) สร้างให้เอง · ผู้ใช้เพิ่มเองได้ (key = null)
+model WaterParam {
+  id        Int        @id @default(autoincrement())
+  owner     User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId   Int
+  system    CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId  Int
+  /// ค่าเริ่มต้น: PH ALK MG CA SAL NH3 NO2 K — null = ผู้ใช้เพิ่มเอง
+  key       String?    @db.VarChar(8)
+  name      String     @db.VarChar(40)
+  /// หน่วยตามชุดทดสอบของฟาร์ม (หยด / ppm / ppt …) — ว่างได้
+  unit      String     @default("") @db.VarChar(16)
+  /// สีขวดน้ำยาทดสอบ "#8b5cf6"
+  color     String     @db.VarChar(9)
+  min       Decimal?   @db.Decimal(10, 3)
+  max       Decimal?   @db.Decimal(10, 3)
+  /// false = ไม่ได้วัดค่านี้ (ซ่อน) — เก็บแถวไว้เพราะประวัติอ้างถึง
+  active    Boolean    @default(true)
+  sortOrder Int        @default(0)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  rules    WaterRule[]
+  readings WaterReading[]
+  actions  WaterAction[]
+
+  @@unique([systemId, key])
+  @@index([ownerId])
+}
+
+/// สารที่ใช้ปรุงน้ำ (ต่อเจ้าของ ใช้ร่วมทุกระบบ) — แค่ชื่อ ไม่มีสต็อก · หน่วยอยู่ที่กฎ
+model WaterSubstance {
+  id        Int      @id @default(autoincrement())
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId   Int
+  name      String   @db.VarChar(40)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  rules   WaterRule[]
+  actions WaterAction[]
+
+  @@unique([ownerId, name])
+}
+
+/// กฎของค่า 1 อย่าง เมื่อต่ำกว่า/สูงกว่าเกณฑ์ (อย่างละไม่เกิน 1 ข้อ)
+model WaterRule {
+  id          Int             @id @default(autoincrement())
+  param       WaterParam      @relation(fields: [paramId], references: [id], onDelete: Cascade)
+  paramId     Int
+  when        WaterWhen
+  action      WaterDo
+  substance   WaterSubstance? @relation(fields: [substanceId], references: [id], onDelete: SetNull)
+  substanceId Int?
+  /// "ใส่ [1] [ช้อน]"
+  amount      Decimal?        @db.Decimal(10, 3)
+  doseUnit    String?         @db.VarChar(16)
+  /// "ค่าจะขึ้น/ลง [2]" ต่อ amount — ว่าง = ใส่เท่า amount ทุกครั้ง (ไม่คำนวณ)
+  effect      Decimal?        @db.Decimal(10, 3)
+  /// ข้อความเพิ่ม เช่น "เปลี่ยนน้ำ 30%" / "วัดอัลคาไลน์ต่อ"
+  note        String?         @db.VarChar(200)
+  updatedAt   DateTime        @updatedAt
+
+  @@unique([paramId, when])
+}
+
+enum WaterWhen {
+  LOW // ต่ำกว่าต่ำสุด
+  HIGH // สูงกว่าสูงสุด
+}
+
+enum WaterDo {
+  DOSE // ใส่สาร (คำนวณจำนวนให้)
+  WARN // แค่เตือน (+ข้อความ)
+  RETEST // วัดซ้ำพรุ่งนี้ (ดึงแจ้งเตือน "วัดค่าน้ำ" มาเป็นพรุ่งนี้)
+}
+
+/// ผลวัดน้ำ 1 ครั้ง (วัดไม่ครบทุกค่าก็ได้)
+model WaterTest {
+  id        Int        @id @default(autoincrement())
+  owner     User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId   Int
+  system    CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId  Int
+  testedAt  DateTime
+  note      String?    @db.Text
+  createdAt DateTime   @default(now())
+
+  readings WaterReading[]
+  actions  WaterAction[]
+
+  @@index([systemId, testedAt])
+}
+
+model WaterReading {
+  id      Int        @id @default(autoincrement())
+  test    WaterTest  @relation(fields: [testId], references: [id], onDelete: Cascade)
+  testId  Int
+  param   WaterParam @relation(fields: [paramId], references: [id], onDelete: Cascade)
+  paramId Int
+  value   Decimal    @db.Decimal(10, 3)
+
+  @@unique([testId, paramId])
+  @@index([paramId])
+}
+
+/// "ทำแล้ว ✓" ของคำแนะนำ 1 ข้อ (ผลวัดครั้งนั้น × ค่านั้น) — ใส่สารแล้ว / จัดการแล้ว
+model WaterAction {
+  id          Int             @id @default(autoincrement())
+  owner       User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId     Int
+  system      CrabSystem      @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId    Int
+  /// ผลวัดที่ทำให้เกิดคำแนะนำนี้
+  test        WaterTest       @relation(fields: [testId], references: [id], onDelete: Cascade)
+  testId      Int
+  param       WaterParam      @relation(fields: [paramId], references: [id], onDelete: Cascade)
+  paramId     Int
+  substance   WaterSubstance? @relation(fields: [substanceId], references: [id], onDelete: SetNull)
+  substanceId Int?
+  amount      Decimal?        @db.Decimal(10, 3)
+  unit        String?         @db.VarChar(16)
+  /// ข้อความที่แสดง (เก็บไว้เผื่อสาร/กฎเปลี่ยนทีหลัง) เช่น "ใส่แมกนีเซียม 2 ช้อนแกง"
+  label       String          @db.VarChar(200)
+  at          DateTime        @default(now())
+
+  @@unique([testId, paramId])
+  @@index([systemId, at])
 }

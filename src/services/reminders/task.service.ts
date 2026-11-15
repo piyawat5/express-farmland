@@ -422,6 +422,38 @@ export async function doRuleNow(user: AuthUser, ruleId: number) {
   markDirty(user.id);
 }
 
+/**
+ * บันทึกค่าน้ำแล้ว (P5) = งาน "วัดค่าน้ำ" ของระบบนั้นเสร็จเอง (closedBy AUTO) · รอบถัดไปนับจากเวลาที่วัด
+ * - ไม่มีงานเปิดอยู่ (วัดก่อนกำหนด) = เก็บเป็นประวัติว่าทำแล้ว (วันละแถว) แล้วเลื่อนรอบ
+ * - บันทึกย้อนหลังที่เก่ากว่าครั้งล่าสุด = ไม่แตะแจ้งเตือน
+ * - retest = มีค่าที่ตั้งไว้ว่า "วัดซ้ำพรุ่งนี้" → รอบถัดไปเป็นพรุ่งนี้ (ถ้าเดิมไกลกว่านั้น)
+ */
+export async function waterTested(ownerId: number, systemId: number, at: Date, retest: boolean) {
+  const now = new Date();
+  const rules = await prisma.reminderRule.findMany({ where: { ownerId, systemId, kind: 'WATER_TEST', active: true } });
+  for (const rule of rules) {
+    if (!isTimeBased(rule)) continue;
+    if (rule.lastDoneAt && at <= rule.lastDoneAt) continue;
+    await prisma.$transaction(async (tx) => {
+      const open = await tx.task.findFirst({ where: { ruleId: rule.id, status: 'OPEN' }, select: { id: true } });
+      if (open) {
+        await tx.task.updateMany({ where: { id: open.id, status: 'OPEN' }, data: { status: 'DONE', doneAt: at, closedBy: 'AUTO', openKey: null } });
+      } else if (!(await tx.task.count({ where: { ruleId: rule.id, status: 'DONE', doneAt: { gte: startOfDay(at) } } }))) {
+        await tx.task.create({
+          data: { ownerId, systemId, ruleId: rule.id, kind: rule.kind, title: rule.title, priority: rule.priority, dueAt: rule.nextDueAt ?? at, status: 'DONE', doneAt: at, closedBy: 'AUTO' },
+        });
+      }
+      await advanceRule(tx, rule, at, 'DONE', now);
+      if (retest) {
+        const tomorrow = atTime(addDays(startOfDay(now), 1), rule.timeOfDay);
+        const next = nextDueAfter(rule, at);
+        if (!next || tomorrow < next) await tx.reminderRule.update({ where: { id: rule.id }, data: { nextDueAt: tomorrow } });
+      }
+    });
+  }
+  markDirty(ownerId);
+}
+
 // ── ปฏิทิน ────────────────────────────────────────────────────────────
 
 /** งานจริงในช่วงวัน (ครบกำหนด หรือทำเสร็จในช่วงนั้น) + รอบที่คาดว่าจะเกิด ("ตามแผน") */

@@ -4,6 +4,7 @@ import { badRequest } from '../../lib/http';
 import { assertOwned } from '../../lib/scope';
 import type { AuthUser } from '../auth.service';
 import { defaultRulesData } from '../reminders/defaults';
+import { defaultParamsData } from '../water/defaults';
 import { checkEveryDays } from '../reminders/rule.service';
 
 // ════════════════════════════════════════════════════════════════════
@@ -86,6 +87,8 @@ export async function createSystem(user: AuthUser, input: { name: string; layout
     });
     // แจ้งเตือนเริ่มต้น 6 เรื่อง (ข้อ 4.4.4)
     await tx.reminderRule.createMany({ data: defaultRulesData(user.id, system.id, new Date()) });
+    // ค่าน้ำเริ่มต้น 8 ค่า (ข้อ 5.7) — ยังไม่มีเกณฑ์ ผู้ใช้ตั้งเองครั้งแรก
+    await tx.waterParam.createMany({ data: defaultParamsData(user.id, system.id) });
     return { ...system, aliveCrabs: 0 };
   });
 }

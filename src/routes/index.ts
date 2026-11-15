@@ -9,6 +9,7 @@ import attentionRoutes from './attention';
 import { contactRouter, crabCheckRouter, crabRouter, eggAiRouter, lotRouter, systemRouter } from './farm';
 import { reminderRouter, schedulerRouter } from './reminders';
 import { feedRouter } from './feed';
+import { waterRouter } from './water';
 import { markDirty } from '../services/reminders/task.service';
 
 // ════════════════════════════════════════════════════════════════════
@@ -51,5 +52,7 @@ api.use('/egg-ai', eggAiRouter);
 api.use('/reminders', reminderRouter);
 // อาหารปู (P4)
 api.use('/feed', feedRouter);
+// น้ำ (P5)
+api.use('/water', waterRouter);
 
 export default api;

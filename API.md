@@ -183,6 +183,30 @@ Rule = { id, systemId, kind, defaultKey, locked, title, icon, priority, repeat(+
 `EatResult = 'ATE' | 'LITTLE' | 'NONE'` · งานแจ้งเตือนที่ผูกกับอาหาร: `FEEDING` (มีเมื่อรอบเปิดแต่ยังไม่ `fed` · กด "เสร็จแล้ว" ที่งาน = `fed` ให้) · `FEED_LOW` (พอไม่ถึง 2 รอบ · ปิดเองเมื่อซื้อ/นับใหม่ · กดเสร็จเองไม่ได้)
 ⚠ ใหม่: `feeding_plan_missing` (menu `feed`, target `feed-plan`) · `feed_stock_missing` (`feed`, `feed-stock`) · `feed_low` (`feed`, `feed-stock`, count) · `feeding_review` (`crabs`, `crabs-feed-review`, count)
 
+## น้ำ (P5) — `/water` · ต้องมีสิทธิ์ใช้งาน · ของคนอื่น = 404
+
+ค่าที่วัด + เกณฑ์ (ต่อระบบ · ค่าเริ่มต้น 8 ค่า `PH ALK MG CA SAL NH3 NO2 K` สร้างตอนสร้างระบบ ยังไม่มีเกณฑ์) · กฎปรุงน้ำ (ต่อค่า: `LOW`/`HIGH` อย่างละ 1) · สาร (ต่อเจ้าของ แค่ชื่อ · เริ่มต้น 5 อย่าง) · ผลวัด (วัดไม่ครบก็ได้)
+**คำแนะนำ** คิดจาก "ค่าล่าสุดที่รู้" ของแต่ละค่า (ผลวัดครั้งล่าสุดไม่ได้วัด = ใช้ค่าเดิม `stale`) · กฎ `DOSE`: จำนวน = ระยะถึงเป้า ÷ (`effect` ÷ `amount`) — ต่ำ → ดันถึงสูงสุด · สูง → ลดถึงต่ำสุด · ไม่มี `effect` = ใส่เท่า `amount` · ปัด ≥10 = จำนวนเต็ม / น้อยกว่า = ทีละครึ่ง
+
+| Method | Path | หมายเหตุ |
+|---|---|---|
+| GET | `/water?systemId` | `WaterState = { params:[{ id, key, name, unit, color, min, max, active, sortOrder, rules:[{ when, action, substanceId, amount, doseUnit, effect, note }] }], substances:[{id,name}], lastTest:{id,testedAt} \| null, latest:[{ paramId, value, testedAt, testId, stale, status 'LOW'\|'HIGH'\|'OK'\|'NA' }], advice:[{ paramId, testId, when, action 'DOSE'\|'WARN'\|'RETEST'\|null(ยังไม่ตั้งกฎ), substanceId, substanceName, amount, unit, note, label, done:{id,label,at} \| null }] }` |
+| GET | `/water/summary?systemId` | แถบหน้ากล่องปู `{ params(จำนวนที่วัด), missingTargets, testedAt \| null, off:[{paramId,key,name,status}], pending(ข้อที่ยังไม่ทำ · ไม่นับวัดซ้ำ) }` |
+| GET | `/water/tests?systemId&take(≤60, 20)&before(ISO)` | ใหม่ก่อน `[{ id, testedAt, note, readings:[{paramId,value}], actions:[{id,paramId,label,at}] }]` |
+| POST | `/water/tests` | `{ systemId, testedAt?(ISO ไม่ส่ง = ตอนนี้ · อนาคต/เกิน 1 ปี = 400), note?, values:[{paramId,value}] ≥1 }` → 201 `WaterState & { testId }` · **งาน "วัดค่าน้ำ" ของระบบปิดเอง** (AUTO · รอบถัดไปนับจากเวลาที่วัด · ย้อนหลังเก่ากว่าครั้งล่าสุด = ไม่แตะ) · มีคำแนะนำ `RETEST` = แจ้งเตือนรอบถัดไปเป็นพรุ่งนี้ |
+| PATCH | `/water/tests/:id` | `{ testedAt?, note?, values?:[{paramId, value \| null(ลบค่านั้น)}] }` → 204 · ไม่เหลือค่าเลย = 400 |
+| DELETE | `/water/tests/:id` | 204 |
+| POST | `/water/params` | `{ systemId, name, unit?, color '#rrggbb', min?, max? }` → 201 `{ id }` · ชื่อซ้ำ = 400 (ที่ซ่อนไว้ = เอากลับมา) |
+| PATCH | `/water/params/:id` | `{ name?, unit?, color?, min?, max?, active? }` → 204 · `active:false` = ไม่ได้วัดค่านี้ (ซ่อน · ประวัติยังอยู่) · min > max = 400 |
+| PUT | `/water/params/targets` | ตั้งทีเดียวทุกค่า `{ systemId, items:[{ id, min, max, unit?, active }] }` → `WaterState` |
+| PUT | `/water/params/:id/rules/:when` | `when = LOW \| HIGH` · `{ action, substanceId? \| substanceName?(สารใหม่), amount?, doseUnit?, effect?, note? }` → 204 · `DOSE` ต้องมีสาร + amount + doseUnit |
+| DELETE | `/water/params/:id/rules/:when` | 204 |
+| POST | `/water/substances` | `{ name }` → 201 `{ id }` (มีอยู่แล้ว/เคยลบ = ตัวเดิม) · PATCH `/water/substances/:id` `{ name?, active? }` |
+| POST | `/water/actions` | "ใส่แล้ว ✓" `{ testId, paramId, amount?(ใส่จริง) }` → 204 · เก็บ `label` ไว้ (เช่น "ใส่แมกนีเซียม 4 ช้อนแกง") · ไม่ได้หลุดแล้ว/กดซ้ำ = 400 · ไม่มีกฎ = "รับทราบแล้ว" |
+| DELETE | `/water/actions/:id` | ยกเลิก → 204 |
+
+⚠ ใหม่: `water_targets_missing` (menu `water`, target `water-targets`, count = ค่าที่วัดแต่ยังไม่มีเกณฑ์) · `water_action` (`water`, `water-advice`, count = คำแนะนำที่ยังไม่ได้ทำ)
+
 ## Realtime (WebSocket) — `ws(s)://<api-host>/ws`
 ต่อด้วย subprotocol `['jwt', <accessToken>]` (ผิด/หมดอายุ = ปิดด้วย 4401 → refresh แล้วต่อใหม่) · server ส่ง `{ t:'hello' }`
 client ส่ง `{ t:'subscribe', systemId }` (ระบบของตัวเองเท่านั้น — ไม่ใช่ = `{ t:'error' }`) / `{ t:'unsubscribe', systemId }` / `{ t:'ping' }`

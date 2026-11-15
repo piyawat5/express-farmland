@@ -2,6 +2,7 @@ import { prisma } from '../lib/prisma';
 import type { AuthUser } from './auth.service';
 import { dueSummary } from './reminders/task.service';
 import { forecast } from './feed/stock.service';
+import { waterAttention } from './water/water.service';
 
 // ════════════════════════════════════════════════════════════════════
 //  ป้าย ⚠ นำทาง — รวม "สิ่งที่ยังไม่ได้ทำ/ยังไม่ได้ตั้งค่า" ไว้ที่เดียว
@@ -50,6 +51,33 @@ export async function getAttention(user: AuthUser): Promise<AttentionItem[]> {
       cta: 'ดูงาน',
       count: due.total,
     });
+  }
+
+  // ── น้ำ (P5) ──
+  if (systems > 0) {
+    const w = await waterAttention(user.id);
+    if (w.missingTargets) {
+      items.push({
+        key: 'water_targets_missing',
+        level: 'setup',
+        menu: 'water',
+        target: 'water-targets',
+        title: `ยังไม่ได้ตั้งเกณฑ์ค่าน้ำ ${w.missingTargets} ค่า`,
+        cta: 'ตั้งเกณฑ์',
+        count: w.missingTargets,
+      });
+    }
+    if (w.pending) {
+      items.push({
+        key: 'water_action',
+        level: 'warn',
+        menu: 'water',
+        target: 'water-advice',
+        title: `ค่าน้ำหลุดเกณฑ์ ${w.pending} ค่า — ดูว่าต้องใส่อะไร`,
+        cta: 'ดู',
+        count: w.pending,
+      });
+    }
   }
 
   // ── อาหารปู (P4) ──
