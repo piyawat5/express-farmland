@@ -4,6 +4,7 @@ import { dueSummary } from './reminders/task.service';
 import { forecast } from './feed/stock.service';
 import { waterAttention } from './water/water.service';
 import { unreadForUser } from './community/bug.service';
+import { villageAttention } from './village/village.service';
 
 // ════════════════════════════════════════════════════════════════════
 //  ป้าย ⚠ นำทาง — รวม "สิ่งที่ยังไม่ได้ทำ/ยังไม่ได้ตั้งค่า" ไว้ที่เดียว
@@ -32,7 +33,7 @@ export type AttentionItem = {
 
 export async function getAttention(user: AuthUser): Promise<AttentionItem[]> {
   const items: AttentionItem[] = [];
-  const [me, systems, lotsNoCost, crabs, due, bugs] = await Promise.all([
+  const [me, systems, lotsNoCost, crabs, due, bugs, village] = await Promise.all([
     prisma.user.findUnique({ where: { id: user.id }, select: { notifyEmail: true } }),
     prisma.crabSystem.count({ where: { ownerId: user.id } }),
     // ล็อตที่มีปูแล้วแต่ยังไม่ใส่ราคา (ลืมแล้วไปเจอตอนขาย = ปัญหาใหญ่ใน v1)
@@ -40,6 +41,7 @@ export async function getAttention(user: AuthUser): Promise<AttentionItem[]> {
     prisma.crab.count({ where: { ownerId: user.id, deletedAt: null } }),
     dueSummary(user.id),
     unreadForUser(user.id),
+    villageAttention(user.id),
   ]);
 
   // งานแจ้งเตือนที่ถึงเวลาแล้ว (P3) — มีงานด่วน = urgent (หน้าเว็บเด้งป๊อปอัปทุก 1 ชม.)
@@ -178,6 +180,30 @@ export async function getAttention(user: AuthUser): Promise<AttentionItem[]> {
       title: bugs.needInfo ? 'ทีมงานขอข้อมูลเพิ่มเรื่องที่คุณแจ้ง' : 'ทีมงานตอบเรื่องที่คุณแจ้งแล้ว',
       cta: 'อ่าน',
       count: bugs.count,
+    });
+  }
+
+  // ── หมู่บ้านฟาร์ม (P9): มีคนขอเข้าชม / จดหมายใหม่ในฟาร์มเรา / เจ้าของฟาร์มตอบจดหมายของเรา ──
+  if (village.requests > 0) {
+    items.push({
+      key: 'village_request',
+      level: 'warn',
+      menu: 'village',
+      target: 'village-requests',
+      title: village.requests === 1 ? 'มีคนขอเข้าชมฟาร์มของคุณ' : `มี ${village.requests} คนขอเข้าชมฟาร์มของคุณ`,
+      cta: 'ดูคำขอ',
+      count: village.requests,
+    });
+  }
+  if (village.letters + village.replies > 0) {
+    items.push({
+      key: 'village_mail',
+      level: 'warn',
+      menu: 'village',
+      target: 'village-mail',
+      title: village.letters ? `มีจดหมายใหม่ในฟาร์มของคุณ ${village.letters} ฉบับ` : 'เพื่อนบ้านตอบจดหมายของคุณแล้ว',
+      cta: 'อ่าน',
+      count: village.letters + village.replies,
     });
   }
 

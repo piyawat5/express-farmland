@@ -92,6 +92,16 @@ model User {
   ideaLikes        IdeaLike[]
   bugReports       BugReport[]
   announcementAcks AnnouncementAck[]
+
+  // ── หมู่บ้านฟาร์ม (P9) ──
+  /// หน้าตาตัวละคร/สัตว์ขี่/สัตว์เลี้ยง — "คนอื่นต้องเห็น" จึงแยกจาก uiPrefs (ค่าส่วนตัว)
+  farmAvatar      Json?
+  /// เข้าร่วมหมู่บ้านเมื่อไร — null = ไม่อยู่ในสมุดรายชื่อ ไม่มีใครเห็น/ขอเข้าฟาร์มได้ และยังดูคนอื่นไม่ได้
+  /// (ขายให้คนแปลกหน้า → ให้เลือกเองว่าจะให้ลูกค้าคนอื่นเห็นชื่อหรือไม่ — ต่างจาก v1 ที่ทุกคนเห็นทุกคน)
+  villageJoinedAt DateTime?
+  farmAccessGiven FarmAccess[] @relation("FarmAccessOwner")
+  farmAccessAsked FarmAccess[] @relation("FarmAccessVisitor")
+  farmLetters     FarmLetter[] @relation("FarmLetterAuthor")
 }
 
 enum Role {
@@ -228,19 +238,23 @@ model AppSetting {
 
 /// ระบบปู = ชุดเลี้ยง 1 ชุด (ระบบน้ำ/กรองแยกกัน = คนละระบบ)
 model CrabSystem {
-  id        Int          @id @default(autoincrement())
-  owner     User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  ownerId   Int
-  name      String
-  layout    SystemLayout
+  id          Int          @id @default(autoincrement())
+  owner       User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId     Int
+  name        String
+  layout      SystemLayout
   /// จำนวนชั้น (คอนโด) หรือจำนวนแถว (ตะกร้า) — ต่อด้าน
-  rows      Int
+  rows        Int
   /// จำนวนช่องต่อชั้น — ต่อด้าน
-  cols      Int
-  sortOrder Int          @default(0)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  cols        Int
+  sortOrder   Int          @default(0)
+  /// หมู่บ้านฟาร์ม (P9): true = เพื่อนบ้านทุกคนเดินเข้าชมได้โดยไม่ต้องขอ
+  villageOpen Boolean      @default(false)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
+  decor         FarmDecor[]
+  letters       FarmLetter[]
   boxes         CrabBox[]
   lots          CrabLot[]
   crabs         Crab[]
@@ -1080,4 +1094,79 @@ model AnnouncementAck {
 
   @@id([announcementId, userId])
   @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  หมู่บ้านฟาร์ม (P9) — ย้ายจาก v1 (Phase 23) · เดินชมฟาร์มเพื่อนด้วยตัวละคร + ตกแต่ง + ฝากจดหมาย
+//  ⚠️ แขกเห็นแค่ "สิ่งที่มองเห็นได้จากการยืนดูกล่อง" (น้ำหนัก/%/อายุ/รูปล่าสุด) — ไม่มีต้นทุน/ลูกค้า/คนขาย
+//  ⚠️ แอดมินไม่มีสิทธิ์พิเศษ (ข้อมูลฟาร์มเห็นเฉพาะเจ้าของ — กติกาเดียวกับ v2 ทั้งระบบ)
+// ─────────────────────────────────────────────────────────────────────
+
+/// สิทธิ์เยี่ยมชมฟาร์ม (คนต่อคน ทุกระบบของเจ้าของ) — อนุมัติแล้วอยู่ถาวรจนกว่าเจ้าของจะถอน (revokedAt)
+model FarmAccess {
+  id          Int              @id @default(autoincrement())
+  owner       User             @relation("FarmAccessOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId     Int
+  visitor     User             @relation("FarmAccessVisitor", fields: [visitorId], references: [id], onDelete: Cascade)
+  visitorId   Int
+  status      FarmAccessStatus @default(PENDING)
+  message     String?          @db.VarChar(200)
+  requestedAt DateTime         @default(now())
+  decidedAt   DateTime?
+  /// != null = ถอนสิทธิ์แล้ว (predicate ที่ใช้บ่อย: status=APPROVED AND revokedAt IS NULL)
+  revokedAt   DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([ownerId, visitorId]) // 1 คู่ = 1 แถว (ขอซ้ำ = upsert กลับเป็น PENDING)
+  @@index([visitorId, status])
+  @@index([ownerId, status])
+}
+
+enum FarmAccessStatus {
+  PENDING
+  APPROVED
+  DENIED
+}
+
+/// ของตกแต่ง 1 ชิ้น — พิกัดเป็น "ช่องตาราง" · kind = คีย์ในแคตตาล็อกหน้าเว็บ (String เพิ่มของได้ไม่ต้อง migrate)
+model FarmDecor {
+  id        Int        @id @default(autoincrement())
+  system    CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId  Int
+  kind      String     @db.VarChar(40)
+  x         Int
+  y         Int
+  z         Int        @default(0)
+  rot       Int        @default(0) // 0 / 90 / 180 / 270
+  scale     Int        @default(100) // 50–200 (%)
+  flip      Boolean    @default(false)
+  variant   String?    @db.VarChar(24)
+  createdAt DateTime   @default(now())
+
+  @@index([systemId])
+}
+
+/// จดหมายที่ผู้มาเยือนปักไว้ในฟาร์ม + คำตอบของเจ้าของ
+model FarmLetter {
+  id                Int        @id @default(autoincrement())
+  system            CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId          Int
+  author            User       @relation("FarmLetterAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  authorId          Int
+  x                 Int
+  y                 Int
+  body              String     @db.VarChar(500)
+  mood              String?    @db.VarChar(16)
+  reply             String?    @db.VarChar(500)
+  repliedAt         DateTime?
+  /// เจ้าของเปิดอ่านแล้ว — null = ยังไม่อ่าน (⚠ ที่เมนูหมู่บ้าน)
+  readAt            DateTime?
+  /// ผู้เขียนเห็นคำตอบแล้ว — null + มี reply = ⚠ ฝั่งผู้เขียน
+  authorReadReplyAt DateTime?
+  deletedAt         DateTime?
+  createdAt         DateTime   @default(now())
+
+  @@index([systemId, deletedAt])
+  @@index([authorId, deletedAt])
 }

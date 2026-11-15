@@ -277,8 +277,37 @@ Rule = { id, systemId, kind, defaultKey, locked, title, icon, priority, repeat(+
 
 `Idea` = `{ id, title, body, status, reply, repliedAt, likeCount, liked, mine, authorName('สมาชิก' ถ้าไม่มีชื่อ), createdAt, updatedAt }` — **ไม่มีอีเมลผู้เขียน** (หลังบ้านเท่านั้น)
 
+## หมู่บ้านฟาร์ม (P9) — `/village` · ต้องมีสิทธิ์ใช้งาน
+กติกา: ต้อง **เข้าร่วมหมู่บ้าน** ก่อนถึงจะเห็นคนอื่น/คนอื่นเห็นเรา · เข้าฟาร์มคนอื่นได้เมื่อทั้งคู่เข้าร่วม + (ระบบนั้น `villageOpen` หรือเจ้าของอนุญาตเรา) · เจ้าของเข้าฟาร์มตัวเองได้เสมอ · **แอดมินไม่มีสิทธิ์พิเศษ** · เข้าไม่ได้ = 404 · ข้อมูลคน = `VillagePerson { id, name, avatarUrl, farmAvatar }` (ไม่มีอีเมล)
+
+| Method | Path | หมายเหตุ |
+|---|---|---|
+| GET | `/village/me` | `{ me: VillagePerson, joined, systems[{id,name,villageOpen}], requests[คำขอรอเราตัดสิน {id,status,message,requestedAt,visitor}], visitors[คนที่เราอนุญาต], outgoing[{id,ownerId,requestedAt}], letters[จดหมายใหม่ในฟาร์มเรา {id,systemId,systemName,body,mood,createdAt,author}], replies[คำตอบใหม่ของจดหมายเรา {id,systemId,systemName,body,reply,repliedAt,owner}] }` |
+| PUT | `/village/me/joined` | `{ joined: boolean }` · ออก = หายจากรายชื่อ + คนที่ยืนในฟาร์มเรา/เราที่ยืนในฟาร์มคนอื่นถูกพาออก (สิทธิ์ที่อนุญาตไว้ไม่ลบ) |
+| PUT | `/village/me/avatar` | `{ skin?, face?, hair?, hairColor?, shirt?, shirtColor?, pants?, pantsColor?, hat?, hatColor?, accessory?, mount?, mountColor?, riding?, pet?, petColor? }` · `.strict()` · คีย์ `[a-z0-9_-]{1,24}` · สี `#rrggbb` เท่านั้น (ถูกวาดลง SVG ที่เครื่องคนอื่น) → `VillagePerson` |
+| GET | `/village/users` | ยังไม่เข้าร่วม = **403** · `[VillagePerson + systems[{id,name,villageOpen,canVisit}], access 'SELF'\|'APPROVED'\|'OPEN'\|'PENDING'\|'DENIED'\|'NONE', accessId]` |
+| POST | `/village/access` | `{ ownerId, message?(≤200) }` → 201 `{ id, status, alreadyApproved }` · ขอเข้าทุกระบบของเจ้าของ · ฟาร์มตัวเอง = 400 · เราไม่ได้เข้าร่วม = 403 · เจ้าของไม่อยู่ในหมู่บ้าน = 404 · เพิ่งถูกปฏิเสธ (< 1 วัน) = 429 |
+| POST | `/village/access/:id/approve` · `/deny` | เจ้าของเท่านั้น (คนอื่น = 404) |
+| DELETE | `/village/access/:id` | เจ้าของถอนสิทธิ์ / ผู้ขอยกเลิกคำขอ · แขกที่ยืนในฟาร์มถูกพาออกทันที · ขอใหม่ได้เลย |
+| GET | `/village/farms/:systemId` | `{ system{id,name,layout,ownerId,villageOpen,owner}, boxes[{id,side,row,col,code, crabs[{id,name,type,cableTieColor,lastWeightG,lastPct,lastPhotoUrl,lastCheckedAt,days}]}], decor[], letters[], isOwner }` · ปูเฉพาะที่ยังเลี้ยงอยู่ · `days` = เลี้ยงมากี่วัน (จากวันรับล็อต) · **ไม่มีต้นทุน/ล็อต/คนขาย/ลูกค้าที่จอง/โน้ต** · จดหมาย: เจ้าของเห็นทุกฉบับ แขกเห็นของตัวเอง |
+| PATCH | `/village/farms/:systemId` | `{ villageOpen }` เจ้าของเท่านั้น · ปิด = คนที่เข้ามาเพราะสวิตช์นี้ถูกพาออก |
+| GET | `/village/farms/:systemId/logbook` | สมุดฟาร์ม: `{ params[{id,key,name,unit,color,min,max}], tests[10 ครั้งล่าสุด {id,testedAt,values[{paramId,value,status}]}] }` (ไม่มีโน้ต) |
+| PUT | `/village/farms/:systemId/decor` | `{ items: [{ kind([a-z0-9_-]≤40), x,y(0–200), z?, rot?(0/90/180/270), scale?(50–200), flip?, variant? }] ≤300 }` · แทนที่ทั้งผัง → ผังใหม่ · เจ้าของเท่านั้น |
+| GET/POST | `/village/farms/:systemId/letters` | POST `{ x, y, body(1–500), mood? }` → 201 · แขกเท่านั้น (เจ้าของ = 400) · ค้างได้ ≤20 ฉบับ/คน/ฟาร์ม |
+| POST | `/village/farms/:systemId/letters/read-all` | เจ้าของอ่านทั้งฟาร์ม → `{ marked }` |
+| POST | `/village/letters/:id/reply` | `{ reply(1–500) }` เจ้าของเท่านั้น · ตอบ = อ่านแล้ว · ผู้เขียนเห็น ⚠ อีกครั้ง |
+| POST | `/village/letters/:id/read` | เจ้าของ = อ่านจดหมาย · ผู้เขียน = เห็นคำตอบแล้ว |
+| DELETE | `/village/letters/:id` | ผู้เขียน หรือเจ้าของฟาร์ม (ซ่อน ไม่ลบจริง) |
+
+⚠ ใหม่: `village_request` (`village`, `village-requests`, มี `count`) · `village_mail` (`village`, `village-mail`, `count` = จดหมายใหม่ + คำตอบใหม่)
+
 ## Realtime (WebSocket) — `ws(s)://<api-host>/ws`
 ต่อด้วย subprotocol `['jwt', <accessToken>]` (ผิด/หมดอายุ = ปิดด้วย 4401 → refresh แล้วต่อใหม่) · server ส่ง `{ t:'hello' }`
 client ส่ง `{ t:'subscribe', systemId }` (ระบบของตัวเองเท่านั้น — ไม่ใช่ = `{ t:'error' }`) / `{ t:'unsubscribe', systemId }` / `{ t:'ping' }`
 server "เคาะ" `{ t:'feeding.changed', systemId }` ทุกครั้งที่รอบ/ผลการกินเปลี่ยน → client ไป `GET /feed/current` ใหม่ (ไม่มี payload — หลุดก็ไม่เพี้ยน)
 `GET /health` → `realtime: { enabled, path }` · ปิดด้วย `REALTIME_ENABLED=false` (หน้าเว็บถอยไป polling 20 วิ)
+
+**หมู่บ้าน (P9)** — ห้องเดินเล่นแยกจากห้องรอบให้อาหาร (แขกไม่ได้ `feeding.*`)
+client: `{ t:'village.enter', systemId, x, y, f }` (เช็คสิทธิ์ครั้งเดียวตอนเข้า — ไม่มีสิทธิ์ = `{ t:'village.kicked' }`) · `{ t:'village.move', systemId, x, y, f }` (≤10 ครั้ง/วิ · บีบให้อยู่ 0–200 · ปัด 1 ตำแหน่ง) · `{ t:'village.emote', systemId, emote }` · `{ t:'village.leave', systemId }` · `f` = `'u'|'d'|'l'|'r'`
+server: `village.entered {peers}` · `village.join {peer}` (เข้ามาใหม่ / แต่งตัวใหม่) · `village.leave {userId}` · `village.move` · `village.emote` · เคาะ `village.letter` / `village.decor` (ไป GET ใหม่) · `village.kicked` (ถูกถอนสิทธิ์/ฟาร์มปิด/ออกจากหมู่บ้าน) · `village.inbox` (ถึงตัวผู้ใช้ทุกเครื่อง: มีคำขอ/จดหมาย/คำตอบใหม่ → โหลด ⚠ ใหม่)
+`PresenceUser = { userId, name, avatarUrl, farmAvatar, x, y, f }` — อยู่ในหน่วยความจำล้วน (ไม่แตะ DB) · ต่อไม่ได้ = หน้าเว็บเดินคนเดียวได้ (ไม่มี REST เขียนตำแหน่ง)

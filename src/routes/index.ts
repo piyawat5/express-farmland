@@ -12,6 +12,7 @@ import { feedRouter } from './feed';
 import { waterRouter } from './water';
 import { ledgerRouter, saleRouter } from './sales';
 import { announcementRouter, bugRouter, ideaRouter, learnRouter } from './community';
+import villageRouter from './village';
 import { markDirty } from '../services/reminders/task.service';
 
 // ════════════════════════════════════════════════════════════════════
@@ -65,5 +66,7 @@ api.use('/sales', saleRouter);
 api.use('/ledger', ledgerRouter);
 // ไอเดีย (P8)
 api.use('/ideas', ideaRouter);
+// หมู่บ้านฟาร์ม (P9)
+api.use('/village', villageRouter);
 
 export default api;
