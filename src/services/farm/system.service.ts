@@ -176,6 +176,8 @@ export async function getSystemGrid(user: AuthUser, id: number) {
         lastPhotoUrl: true,
         lastCheckedAt: true,
         lot: { select: { id: true, receivedAt: true, totalCost: true } },
+        // ใบจอง (P6) → ป้าย 🔖 ชื่อลูกค้าบนกล่อง · ห้ามเลือกซ้ำในโหมดขาย
+        sale: { select: { id: true, no: true, customer: { select: { name: true } } } },
       },
     }),
     checkEveryDays(id),
@@ -186,9 +188,10 @@ export async function getSystemGrid(user: AuthUser, id: number) {
     /** รอบเช็คเนื้อ/ไข่ (วัน) จากแจ้งเตือน "เช็คเนื้อ/ไข่ปู" — null = ปิดเรื่องนี้ไว้ (ไม่ขึ้น ⚠ ถึงรอบ) */
     checkEveryDays: checkDays,
     boxes,
-    crabs: crabs.map(({ lot, ...c }) => ({
+    crabs: crabs.map(({ lot, sale, ...c }) => ({
       ...c,
       lot: { id: lot.id, receivedAt: lot.receivedAt, costMissing: lot.totalCost == null },
+      sale: sale ? { id: sale.id, no: sale.no, customer: sale.customer?.name ?? null } : null,
     })),
   };
 }

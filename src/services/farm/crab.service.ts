@@ -183,9 +183,12 @@ const CRAB_DETAIL = {
   lastPhotoUrl: true,
   lastCheckedAt: true,
   diedAt: true,
+  soldAt: true,
   note: true,
   createdAt: true,
   systemId: true,
+  /** ใบจอง/ใบขายที่ถือปูตัวนี้อยู่ (P6) */
+  sale: { select: { id: true, no: true, status: true, customer: { select: { name: true } } } },
   box: { select: { id: true, side: true, code: true } },
   system: { select: { id: true, name: true, layout: true } },
   lot: {
@@ -203,8 +206,8 @@ export async function getCrab(user: AuthUser, id: number) {
     user,
     'ปูตัวนี้',
   );
-  const { ownerId: _o, ...rest } = crab;
-  return rest;
+  const { ownerId: _o, sale, ...rest } = crab;
+  return { ...rest, sale: sale ? { id: sale.id, no: sale.no, status: sale.status, customer: sale.customer?.name ?? null } : null };
 }
 
 export type UpdateCrabInput = {
@@ -222,15 +225,26 @@ export type UpdateCrabInput = {
 
 async function loadOwnedCrab(user: AuthUser, id: number) {
   return assertOwned(
-    await prisma.crab.findFirst({ where: { id, deletedAt: null }, select: { id: true, ownerId: true, lotId: true, type: true, systemId: true } }),
+    await prisma.crab.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, ownerId: true, lotId: true, type: true, systemId: true, sale: { select: { no: true, status: true } } },
+    }),
     user,
     'ปูตัวนี้',
   );
 }
 
+/** ปูที่อยู่ในใบจอง/ใบขาย (P6) ทำบางอย่างไม่ได้จนกว่าจะเอาออกจากใบ */
+function assertNotHeld(crab: { sale: { no: number; status: string } | null }, what: string) {
+  if (!crab.sale) return;
+  const kind = crab.sale.status === 'DONE' ? 'ขายไปแล้วในใบที่' : 'จองไว้ในใบที่';
+  throw badRequest(`ปูตัวนี้${kind} ${crab.sale.no} — ${what}ไม่ได้ เอาออกจากใบก่อน`);
+}
+
 export async function updateCrab(user: AuthUser, id: number, input: UpdateCrabInput) {
   const crab = await loadOwnedCrab(user, id);
   const box = input.boxId ? await loadBox(user, input.boxId) : null;
+  if (box && box.systemId !== crab.systemId) assertNotHeld(crab, 'ย้ายไปอีกระบบ');
   if (input.lotId && input.lotId !== crab.lotId) {
     assertOwned(await prisma.crabLot.findUnique({ where: { id: input.lotId } }), user, 'ล็อตนี้');
   }
@@ -259,7 +273,8 @@ export async function updateCrab(user: AuthUser, id: number, input: UpdateCrabIn
 
 /** ปูตาย / ย้อนกลับ (กดผิด) */
 export async function setCrabDead(user: AuthUser, id: number, dead: boolean, diedAt?: Date) {
-  await loadOwnedCrab(user, id);
+  const crab = await loadOwnedCrab(user, id);
+  assertNotHeld(crab, dead ? 'บันทึกว่าตาย' : 'เปลี่ยนสถานะ');
   await prisma.crab.update({
     where: { id },
     data: dead ? { status: 'DEAD', diedAt: diedAt ?? new Date() } : { status: 'ALIVE', diedAt: null },
@@ -270,6 +285,7 @@ export async function setCrabDead(user: AuthUser, id: number, dead: boolean, die
 /** ลบเพราะบันทึกผิด → ซ่อน + แบ่งต้นทุนล็อตใหม่ (ไม่ลบจริง เผื่อกดพลาด) */
 export async function deleteCrab(user: AuthUser, id: number) {
   const crab = await loadOwnedCrab(user, id);
+  assertNotHeld(crab, 'ลบ');
   await prisma.$transaction(async (tx) => {
     await tx.crab.update({ where: { id }, data: { deletedAt: new Date() } });
     await allocateLotCost(tx, crab.lotId);

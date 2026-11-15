@@ -87,7 +87,7 @@ key ที่มีตอนนี้: `system_missing` (menu `crabs`, target `c
 | POST | `/systems` | `{ name, layout 'BASKET'\|'CONDO_SINGLE'\|'CONDO_DOUBLE', rows(1–30), cols(1–60) }` → สร้างกล่องให้ครบ (หน้า-หลัง = 2 ด้าน) รหัส `A1` (A = ชั้นบนสุด) |
 | PATCH | `/systems/:id` | `{ name?, rows?, cols? }` · ย่อผังได้เฉพาะเมื่อกล่องที่หายไม่มีปู (400 บอกรหัสกล่อง) |
 | DELETE | `/systems/:id` | ได้เฉพาะระบบที่ไม่เคยมีปู |
-| GET | `/systems/:id/grid` | `{ system, checkEveryDays(รอบเช็คปูจากแจ้งเตือน · null = ปิดเรื่องนี้ ไม่ขึ้น ⚠), boxes:[{id,side,row,col,code}], crabs:[{id,boxId,name,type,sex,grade,cableTieColor,lastWeightG,lastPct,lastPhotoUrl,lastCheckedAt, lot:{id,receivedAt,costMissing}}] }` — ปูที่ยังเลี้ยงอยู่เท่านั้น |
+| GET | `/systems/:id/grid` | `{ system, checkEveryDays(รอบเช็คปูจากแจ้งเตือน · null = ปิดเรื่องนี้ ไม่ขึ้น ⚠), boxes:[{id,side,row,col,code}], crabs:[{id,boxId,name,type,sex,grade,cableTieColor,lastWeightG,lastPct,lastPhotoUrl,lastCheckedAt, lot:{id,receivedAt,costMissing}, sale:{id,no,customer} \| null(P6 ใบจองที่ถือปูตัวนี้ → ป้าย 🔖)}] }` — ปูที่ยังเลี้ยงอยู่เท่านั้น |
 
 ### คู่ค้า / ล็อต
 | Method | Path | หมายเหตุ |
@@ -104,9 +104,9 @@ key ที่มีตอนนี้: `system_missing` (menu `crabs`, target `c
 | Method | Path | หมายเหตุ |
 |---|---|---|
 | POST | `/crabs` | `{ boxId, lotId \| newLot:{sellerId?,receivedAt?,totalCost?}, type 'EGG'\|'MEAT'\|'SOFT', name?(ค่าเริ่มต้น = รหัสกล่อง), sex?, grade?, cableTieColor?, note?, check?: CheckInput }` |
-| GET | `/crabs/:id` | รายละเอียด + `checks[]` (ใหม่สุดก่อน) + `lot` + `box` + `system` |
+| GET | `/crabs/:id` | รายละเอียด + `checks[]` (ใหม่สุดก่อน) + `lot` + `box` + `system` + `soldAt` + `sale:{id,no,status,customer} \| null` (P6) |
 | PATCH | `/crabs/:id` | `{ name?, type?, sex?, grade?, cableTieColor?, note?, boxId?(ย้ายกล่อง), lotId?(ย้ายล็อต) }` |
-| POST | `/crabs/:id/dead` | `{ dead: boolean, diedAt? }` — ปูตาย / กดผิดเอากลับ |
+| POST | `/crabs/:id/dead` | `{ dead: boolean, diedAt? }` — ปูตาย / กดผิดเอากลับ · **ปูในใบจอง/ใบขาย = 400** ("ปูตัวนี้จองไว้ในใบที่ 3 — … เอาออกจากใบก่อน") — ลบ / ย้ายข้ามระบบ ก็เช่นกัน |
 | DELETE | `/crabs/:id` | ลบเพราะบันทึกผิด (ซ่อน) + แบ่งต้นทุนล็อตใหม่ |
 | POST | `/crabs/:id/checks` | **"เช็ควันนี้"** = เพิ่มรอบใหม่เสมอ · body = CheckInput |
 | PATCH | `/crab-checks/:id` | **"แก้รอบนี้"** (ส่งเฉพาะช่องที่แก้) |
@@ -206,6 +206,40 @@ Rule = { id, systemId, kind, defaultKey, locked, title, icon, priority, repeat(+
 | DELETE | `/water/actions/:id` | ยกเลิก → 204 |
 
 ⚠ ใหม่: `water_targets_missing` (menu `water`, target `water-targets`, count = ค่าที่วัดแต่ยังไม่มีเกณฑ์) · `water_action` (`water`, `water-advice`, count = คำแนะนำที่ยังไม่ได้ทำ)
+
+## ขายปู (P6) — `/sales` · ต้องมีสิทธิ์ใช้งาน · ของคนอื่น = 404
+
+ใบ 1 ใบ = ปูหลายตัวจากระบบเดียวกัน ลูกค้าคนเดียว · `status` `RESERVED`(จองไว้ — ปูยังอยู่ในกล่อง ป้าย 🔖) → `DONE`(ขายแล้ว — ปู `SOLD` ออกจากผัง ลงบัญชีวัน `soldAt`) · `CANCELLED`(ปูกลับเข้ากล่องเดิม)
+ปูในใบถูกล็อกด้วย `Crab.saleId` (updateMany แบบมีเงื่อนไข) → ปูที่อยู่ในใบอื่น/ไม่ได้เลี้ยงอยู่แล้ว = **400 ทั้งใบย้อนกลับ** (2 เครื่องขายตัวเดียวกันพร้อมกัน = สำเร็จเครื่องเดียว)
+ราคารายตัวคิดที่หน้าเว็บ (น้ำหนัก × ราคา/กก. ปัดบาท) แล้วส่งมา · ใบเก็บ **สำเนา** ชื่อ/กล่อง/น้ำหนัก/%/รูป ณ วันขาย (ใบเสร็จไม่เปลี่ยนตามทีหลัง)
+
+| Method | Path | หมายเหตุ |
+|---|---|---|
+| GET | `/sales?from&to(YYYY-MM-DD รวมวัน to · ไม่ส่ง = 90 วันล่าสุด)&status?` | ใบจอง **ทั้งหมด** + ใบที่ขาย (`soldAt`)/ยกเลิก (`cancelledAt`) ในช่วง → `[{ id, no, status, system:{id,name}, customer:{id,name,phone} \| null, total, count, weightG, photos(≤4), reservedAt, soldAt, cancelledAt, createdAt }]` |
+| POST | `/sales` | `{ systemId, status 'RESERVED'\|'DONE', customerId?(จอง = บังคับ), soldAt?(ขายย้อนหลัง), note?, items:[{ crabId, price ≥0, pricePerKg?(null = ใส่ราคาเอง) }] ≥1 }` → 201 `SaleDetail` · เลขที่ใบ `no` นับต่อเจ้าของ |
+| GET | `/sales/:id` | `SaleDetail = { id, no, status, system, customer, total, reservedAt, soldAt, cancelledAt, note, createdAt, items:[{ id, crabId, price, pricePerKg, name, place, type, weightG, pct, photoUrl, cost(ต้นทุนตัวนี้ · null = ล็อตยังไม่ใส่ราคา), crabStatus, lot:{id,receivedAt,costMissing} }] }` |
+| PATCH | `/sales/:id` | `{ customerId?, soldAt?(เฉพาะขายแล้ว), note?, items?(ทั้งชุดใหม่ — ตัวที่หายไป = ปล่อยกลับเข้าผัง · ตัวใหม่ = ล็อก) }` · ใบจองเอาลูกค้าออก / ใบยกเลิกแล้ว = 400 |
+| POST | `/sales/:id/done` | ใบจอง → ขายแล้ว `{ soldAt? }` (สำเนาน้ำหนัก/%/รูปล่าสุดใหม่) · ไม่ใช่ใบจอง = 400 |
+| POST | `/sales/:id/cancel` | ยกเลิก (จอง/ขายแล้ว) → ปูกลับเข้ากล่องเดิม · รายรับหายจากบัญชี · ซ้ำ = 400 |
+
+## บัญชี (P6) — `/ledger` · ต้องมีสิทธิ์ใช้งาน · ของคนอื่น = 404
+
+หมวด (คำง่ายแทนศัพท์บัญชี): **ต้นทุนปู** `DIRECT` = `CRAB`(ซื้อปู*) `FEED`(อาหาร*) `SUBSTANCE` · **ค่าใช้จ่ายฟาร์ม** `INDIRECT` = `ELECTRIC` `WATER` `EQUIPMENT` `LABOR` `OTHER` · **รายรับ** `INCOME` = `SALE`(ขายปู*) `INCOME`(อื่นๆ)
+\* ระบบลงให้ **อ่านจากต้นทางทุกครั้ง ไม่คัดลอกเก็บ**: ล็อตที่ใส่ราคา (`receivedAt`) · การซื้ออาหารที่ใส่ราคา (`FeedStockMove BUY`) · ใบที่ขายแล้ว (`soldAt`) → แก้ที่ต้นทาง = บัญชีเปลี่ยนตาม
+ตาราง `LedgerEntry` เก็บแค่ที่ลงเอง + ค่าไฟจากตัวช่วย (เดือนละแถว `autoMonth`)
+
+| Method | Path | หมายเหตุ |
+|---|---|---|
+| GET | `/ledger?from&to` | (YYYY-MM-DD รวมวัน to · ไม่เกิน 13 เดือน) ใหม่ → เก่า `[{ key("sale:12"\|"lot:5"\|"feed:33"\|"m:7"), source 'LOT'\|'FEED'\|'SALE'\|'MANUAL'\|'ELECTRIC', category, group, amount(บวกเสมอ), at, title, detail, refId, systemName }]` · ลงค่าไฟเดือนที่ยังไม่ได้ลงให้ก่อนตอบ |
+| POST | `/ledger` | ลงเอง `{ category(ไม่รวม CRAB/SALE), amount > 0, at, note? }` → 201 `{ id }` |
+| PATCH | `/ledger/:id` | `{ category?, amount?, at?, note? }` → 204 · ค่าไฟจากตัวช่วยแก้ยอดได้ (ตัวช่วยไม่ทับอีก) เปลี่ยนหมวดไม่ได้ |
+| DELETE | `/ledger/:id` | 204 · ค่าไฟจากตัวช่วย = ซ่อน (ไม่ลงเดือนนั้นซ้ำ) |
+| GET | `/ledger/lots` | กำไรรายล็อต ใหม่ → เก่า `[{ lotId, systemId, systemName, receivedAt, seller, crabs, sold, dead, alive, reserved, cost \| null, costMissing, revenue, shared(ค่าอาหาร+ค่าฟาร์ม ประมาณ · ปัดบาท), profit, finished(ขาย/ตายหมด) }]` |
+| GET | `/ledger/electric` | ตัวช่วยค่าไฟ `{ devices:[{key,name,watts,qty,hours}], rate, active, startMonth, monthly }` \| `null` (ยังไม่เคยตั้ง) |
+| PUT | `/ledger/electric` | `{ devices(≤30), rate(บาท/หน่วย), active }` → ยอดเดือนนี้เปลี่ยนตาม (ถ้ายังไม่ได้แก้เอง) · เดือนก่อนๆ ไม่แตะ · ตั้งครั้งแรก/เปิดใหม่ = เริ่มเดือนนี้ · ปิด = เอาค่าไฟเดือนนี้ที่ลงให้ออก |
+
+ค่าไฟ/เดือน = Σ(วัตต์ × จำนวน × ชม./วัน × 30 ÷ 1000) × ค่าไฟต่อหน่วย (ปัดบาท · เดือนละ 30 วันเท่ากัน)
+**ส่วนแบ่งค่าอาหาร/ค่าฟาร์มของล็อต**: ค่าใช้จ่ายที่ไม่ใช่ซื้อปู/รายรับ รวมเป็นกองรายเดือน ÷ จำนวน "ตัว-วัน" ของปูทั้งฟาร์มในเดือนนั้น × ตัว-วันของล็อต (ตั้งแต่วันรับเข้าล็อต ถึงวันขาย/ตาย/วันนี้) · เดือนที่ไม่มีปู = ไม่มีใครรับ (`src/lib/profit.ts` — สำเนาที่หน้าเว็บ)
 
 ## Realtime (WebSocket) — `ws(s)://<api-host>/ws`
 ต่อด้วย subprotocol `['jwt', <accessToken>]` (ผิด/หมดอายุ = ปิดด้วย 4401 → refresh แล้วต่อใหม่) · server ส่ง `{ t:'hello' }`

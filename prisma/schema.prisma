@@ -8,7 +8,8 @@
 //    P3            แจ้งเตือน (กฎ/งาน/อีเมลตามเวลา)
 //    P4            อาหาร (สต็อก · แผน · รอบให้อาหาร · ผลการกินรายตัว)
 //    P5            น้ำ (ค่าที่วัด · กฎปรุงน้ำ · ผลวัด)
-//    P6–P9         ขาย/บัญชี · ชุมชน · หมู่บ้านฟาร์ม
+//    P6            ขาย (ใบขาย/จอง · รายตัว) · บัญชี (ลงเอง + ค่าไฟ) — ซื้อปู/ซื้ออาหาร/ขาย อ่านจากต้นทาง
+//    P7–P9         หน้าแรก · ชุมชน · หมู่บ้านฟาร์ม
 // ════════════════════════════════════════════════════════════════════
 
 generator client {
@@ -78,6 +79,11 @@ model User {
   waterSubstances WaterSubstance[]
   waterTests      WaterTest[]
   waterActions    WaterAction[]
+
+  // ── ขาย & บัญชี (P6) ──
+  sales         Sale[]
+  ledgerEntries LedgerEntry[]
+  electricSetup ElectricSetup?
 }
 
 enum Role {
@@ -237,6 +243,7 @@ model CrabSystem {
   waterParams   WaterParam[]
   waterTests    WaterTest[]
   waterActions  WaterAction[]
+  sales         Sale[]
 
   @@index([ownerId])
 }
@@ -283,7 +290,8 @@ model Contact {
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 
-  lots CrabLot[]
+  lots  CrabLot[]
+  sales Sale[]
 
   @@index([ownerId, type])
 }
@@ -344,6 +352,11 @@ model Crab {
   lastPhotoUrl  String?    @db.Text
   lastCheckedAt DateTime?
   diedAt        DateTime?
+  /// ใบขายที่ถือปูตัวนี้อยู่ (จองไว้ / ขายแล้ว) — ล็อกด้วย updateMany แบบมีเงื่อนไข กัน 2 เครื่องจองตัวเดียวกัน
+  sale          Sale?      @relation("CrabHeldBy", fields: [saleId], references: [id], onDelete: SetNull)
+  saleId        Int?
+  /// วันที่ขาย (สำเนาจากใบขาย) — ใช้นับวันที่ปูอยู่ในฟาร์มตอนแบ่งค่าอาหาร/ค่าฟาร์มให้ล็อต
+  soldAt        DateTime?
   note          String?    @db.Text
   /// ลบเพราะบันทึกผิด (ไม่ใช่ตาย/ขาย) — ซ่อนจากทุกหน้า
   deletedAt     DateTime?
@@ -352,10 +365,12 @@ model Crab {
 
   checks         CrabCheck[]
   feedingEntries FeedingEntry[]
+  saleItems      SaleItem[]
 
   @@unique([ownerId, code])
   @@index([systemId, status, deletedAt])
   @@index([lotId])
+  @@index([saleId])
 }
 
 enum CrabType {
@@ -808,4 +823,121 @@ model WaterAction {
 
   @@unique([testId, paramId])
   @@index([systemId, at])
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  ขาย & บัญชี (P6)
+//  - ขายจากผังกล่อง: เลือกปู → ลูกค้า + ราคา/กก. (แบ่งรายตัว) → "จองไว้ก่อน" หรือ "ขายแล้ว"
+//  - ปูที่อยู่ในใบ (จอง/ขาย) ถูกล็อกด้วย Crab.saleId — จองตัวเดียวกันซ้ำไม่ได้
+//  - ขายแล้ว = ปูสถานะ SOLD ออกจากผัง · ยกเลิก = ปูกลับมาที่กล่องเดิม
+//  - บัญชี: ซื้อปู (ราคาล็อต) · ซื้ออาหาร (ราคาตอนซื้อ) · ขายปู (ใบที่ขายแล้ว) อ่านจากต้นทางทุกครั้ง
+//    ไม่คัดลอกมาเก็บ → ไม่มีวันไม่ตรงกัน · ตาราง LedgerEntry เก็บแค่ที่ผู้ใช้ลงเอง + ค่าไฟจากตัวช่วย
+// ─────────────────────────────────────────────────────────────────────
+
+/// ใบขาย/ใบจอง 1 ใบ (ปูหลายตัว ลูกค้าคนเดียว)
+model Sale {
+  id          Int        @id @default(autoincrement())
+  owner       User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId     Int
+  system      CrabSystem @relation(fields: [systemId], references: [id], onDelete: Cascade)
+  systemId    Int
+  /// เลขที่ใบ นับต่อเจ้าของ (1, 2, 3 …)
+  no          Int
+  status      SaleStatus
+  /// จองต้องมีลูกค้า · ขายหน้าฟาร์มไม่ใส่ก็ได้
+  customer    Contact?   @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerId  Int?
+  /// ผลรวมราคารายตัว
+  total       Decimal    @db.Decimal(12, 2)
+  reservedAt  DateTime?
+  /// วันที่ขาย — ลงบัญชีวันนี้
+  soldAt      DateTime?
+  cancelledAt DateTime?
+  note        String?    @db.Text
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  items     SaleItem[]
+  heldCrabs Crab[]     @relation("CrabHeldBy")
+
+  @@unique([ownerId, no])
+  @@index([ownerId, status, soldAt])
+}
+
+enum SaleStatus {
+  RESERVED // จองไว้ (ปูยังอยู่ในกล่อง ป้าย 🔖 ชื่อลูกค้า)
+  DONE // ขายแล้ว
+  CANCELLED // ยกเลิก (ปูกลับเข้าผัง)
+}
+
+/// ปู 1 ตัวในใบ — เก็บสำเนา ณ วันขาย (ชื่อ/น้ำหนัก/%/รูป) ใบเสร็จจะได้ไม่เปลี่ยนตามทีหลัง
+model SaleItem {
+  id         Int      @id @default(autoincrement())
+  sale       Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  saleId     Int
+  crab       Crab     @relation(fields: [crabId], references: [id], onDelete: Cascade)
+  crabId     Int
+  price      Decimal  @db.Decimal(12, 2)
+  /// ราคา/กก. ที่ใช้คิดราคาตัวนี้ — null = ใส่ราคาตัวนี้เอง
+  pricePerKg Decimal? @db.Decimal(10, 2)
+  name       String
+  /// กล่อง เช่น "A1" / "หน้า A1"
+  place      String   @default("")
+  type       CrabType
+  weightG    Decimal? @db.Decimal(8, 1)
+  pct        Int?
+  photoUrl   String?  @db.Text
+
+  @@unique([saleId, crabId])
+  @@index([crabId])
+}
+
+/// รายการบัญชีที่ผู้ใช้ลงเอง + ค่าไฟที่ตัวช่วยลงให้เดือนละแถว (autoMonth)
+model LedgerEntry {
+  id        Int            @id @default(autoincrement())
+  owner     User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId   Int
+  category  LedgerCategory
+  amount    Decimal        @db.Decimal(12, 2)
+  at        DateTime
+  note      String?        @db.VarChar(200)
+  /// ค่าไฟจากตัวช่วย: เดือน "YYYY-MM" (null = ลงเอง) — unique กันลงซ้ำตอน 2 คำขอมาพร้อมกัน
+  autoMonth String?        @db.Char(7)
+  /// ผู้ใช้แก้ยอดค่าไฟเดือนนั้นแล้ว → ตัวช่วยไม่ทับ
+  edited    Boolean        @default(false)
+  /// ผู้ใช้ลบค่าไฟเดือนนั้น → ซ่อนไว้ (ไม่งั้นตัวช่วยลงใหม่)
+  hidden    Boolean        @default(false)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@unique([ownerId, autoMonth])
+  @@index([ownerId, at])
+}
+
+/// หมวดที่ลงเองได้ (ซื้อปู/ขายปู/ซื้ออาหารในสต็อก มาจากต้นทาง ไม่อยู่ใน enum นี้)
+enum LedgerCategory {
+  FEED // ต้นทุนปู: อาหาร (ซื้อนอกสต็อก)
+  SUBSTANCE // ต้นทุนปู: สาร/จุลินทรีย์
+  ELECTRIC // ค่าใช้จ่ายฟาร์ม: ค่าไฟ
+  WATER // ค่าใช้จ่ายฟาร์ม: ค่าน้ำประปา
+  EQUIPMENT // ค่าใช้จ่ายฟาร์ม: อุปกรณ์
+  LABOR // ค่าใช้จ่ายฟาร์ม: ค่าแรง
+  OTHER // ค่าใช้จ่ายฟาร์ม: อื่นๆ
+  INCOME // รายรับอื่นๆ
+}
+
+/// ตัวช่วยคิดค่าไฟ (ต่อเจ้าของ): อุปกรณ์ × วัตต์ × ชม./วัน × ค่าไฟ/หน่วย → ลงบัญชีให้ทุกเดือน (ค่าประมาณ)
+model ElectricSetup {
+  id         Int      @id @default(autoincrement())
+  owner      User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId    Int      @unique
+  /// [{ key, name, watts, qty, hours }]
+  devices    Json
+  /// บาท/หน่วย (kWh)
+  rate       Decimal  @db.Decimal(6, 2)
+  active     Boolean  @default(true)
+  /// เดือนแรกที่ลงให้ "YYYY-MM" (เปิดใหม่ = เริ่มเดือนนี้ ไม่ย้อนเติมช่วงที่ปิดไว้)
+  startMonth String   @db.Char(7)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }

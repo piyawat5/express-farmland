@@ -10,6 +10,7 @@ import { contactRouter, crabCheckRouter, crabRouter, eggAiRouter, lotRouter, sys
 import { reminderRouter, schedulerRouter } from './reminders';
 import { feedRouter } from './feed';
 import { waterRouter } from './water';
+import { ledgerRouter, saleRouter } from './sales';
 import { markDirty } from '../services/reminders/task.service';
 
 // ════════════════════════════════════════════════════════════════════
@@ -54,5 +55,8 @@ api.use('/reminders', reminderRouter);
 api.use('/feed', feedRouter);
 // น้ำ (P5)
 api.use('/water', waterRouter);
+// ขาย & บัญชี (P6)
+api.use('/sales', saleRouter);
+api.use('/ledger', ledgerRouter);
 
 export default api;
