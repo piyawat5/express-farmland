@@ -9,6 +9,7 @@ import * as contacts from '../services/farm/contact.service';
 import * as lots from '../services/farm/lot.service';
 import * as crabs from '../services/farm/crab.service';
 import * as eggAi from '../services/farm/eggEstimate.service';
+import * as history from '../services/farm/history.service';
 
 // ════════════════════════════════════════════════════════════════════
 //  ฟาร์ม (P2) — ระบบปู · คู่ค้า · ล็อต · ปู · การเช็คปู · AI % ไข่
@@ -216,6 +217,32 @@ crabRouter.post(
   }),
   asyncHandler(async (req, res) => {
     res.status(201).json(serialize(await crabs.createCrab(req.user!, req.body)));
+  }),
+);
+
+// ── ประวัติปู (P7) — ต้องอยู่ก่อน /:id ──
+crabRouter.get(
+  '/history',
+  validate({
+    query: z.object({
+      systemId: z.coerce.number().int().positive().optional(),
+      status: z.enum(['ALIVE', 'SOLD', 'DEAD', 'DELETED']).optional(),
+      type: crabType.optional(),
+      q: z.string().trim().max(60).optional(),
+      skip: z.coerce.number().int().min(0).optional(),
+      take: z.coerce.number().int().min(1).max(100).optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    res.json(serialize(await history.crabHistory(req.user!, req.query as unknown as history.HistoryQuery)));
+  }),
+);
+
+crabRouter.get(
+  '/compare',
+  validate({ query: z.object({ systemId: z.coerce.number().int().positive() }) }),
+  asyncHandler(async (req, res) => {
+    res.json(serialize(await history.crabCompare(req.user!, Number((req.query as { systemId: unknown }).systemId))));
   }),
 );
 

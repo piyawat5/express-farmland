@@ -6,6 +6,7 @@ import { validate } from '../middleware/validate';
 import * as stock from '../services/feed/stock.service';
 import * as plans from '../services/feed/plan.service';
 import * as rounds from '../services/feed/round.service';
+import * as analysis from '../services/feed/analysis.service';
 import { syncOwner } from '../services/reminders/task.service';
 
 // ════════════════════════════════════════════════════════════════════
@@ -81,6 +82,15 @@ feedRouter.get(
   validate({ params: idParam }),
   asyncHandler(async (req, res) => {
     res.json(await stock.listMoves(req.user!, Number(req.params.id)));
+  }),
+);
+
+// ── วิเคราะห์อาหาร (P7) — ทั้งฟาร์ม ย้อนหลัง days วัน ──
+feedRouter.get(
+  '/analysis',
+  validate({ query: z.object({ days: z.coerce.number().int().min(30).max(730).optional() }) }),
+  asyncHandler(async (req, res) => {
+    res.json(await analysis.feedAnalysis(req.user!, (req.query as { days?: number }).days ?? 180));
   }),
 );
 

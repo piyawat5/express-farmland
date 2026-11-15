@@ -104,7 +104,9 @@ key ที่มีตอนนี้: `system_missing` (menu `crabs`, target `c
 | Method | Path | หมายเหตุ |
 |---|---|---|
 | POST | `/crabs` | `{ boxId, lotId \| newLot:{sellerId?,receivedAt?,totalCost?}, type 'EGG'\|'MEAT'\|'SOFT', name?(ค่าเริ่มต้น = รหัสกล่อง), sex?, grade?, cableTieColor?, note?, check?: CheckInput }` |
-| GET | `/crabs/:id` | รายละเอียด + `checks[]` (ใหม่สุดก่อน) + `lot` + `box` + `system` + `soldAt` + `sale:{id,no,status,customer} \| null` (P6) |
+| GET | `/crabs/history?systemId?&status?&type?&q?&skip&take(≤100 · ค่าเริ่มต้น 15)` | **ประวัติปู (P7) แท็บ "ปูทั้งหมด"** — รวมปูที่ขาย/ตาย/**ลบ** · `status` `ALIVE`\|`SOLD`\|`DEAD`\|`DELETED`(ลบเพราะบันทึกผิด) · `q` = ชื่อมีคำนี้ หรือรหัสกล่องตรง (ตัวเล็กก็ได้) · ไม่ส่ง systemId = ทุกระบบ · ล็อตใหม่สุดก่อน แล้วตามลำดับที่รับเข้า → `{ total, counts:{ALIVE,SOLD,DEAD,DELETED}(ตามชนิด/คำค้น ไม่สนสถานะที่กรอง), items:[{ id, name, type, status, systemId, allocatedCost, lastWeightG, lastPct, lastPhotoUrl, lastCheckedAt, diedAt, soldAt, deletedAt, checks(จำนวนรอบ), box:{code,side}\|null, lot:{id,receivedAt}, sale:{id,no,status,customer}\|null, salePrice(ใบที่ขายแล้วเท่านั้น)\|null }] }` |
+| GET | `/crabs/compare?systemId` | **ประวัติปู (P7) แท็บ "ก่อน-หลัง"** — ปูที่ยังเลี้ยงอยู่ (รวมจองไว้) ที่เช็คแล้ว ≥ 2 ครั้ง เรียงตามผัง → `[{ id, name, type, box:{code,side}\|null, lotReceivedAt, checks, first, prev, last }]` (รอบแรก · รอบก่อนล่าสุด · รอบล่าสุด = `{id, checkedAt, weightG, pct, photoUrl}`) |
+| GET | `/crabs/:id` | รายละเอียด + `checks[]` (ใหม่สุดก่อน) + `lot` + `box` + `system` + `soldAt` + `sale:{id,no,status,customer} \| null` (P6) · ⚠️ route `/crabs/history` `/crabs/compare` ต้องอยู่ก่อน `/:id` |
 | PATCH | `/crabs/:id` | `{ name?, type?, sex?, grade?, cableTieColor?, note?, boxId?(ย้ายกล่อง), lotId?(ย้ายล็อต) }` |
 | POST | `/crabs/:id/dead` | `{ dead: boolean, diedAt? }` — ปูตาย / กดผิดเอากลับ · **ปูในใบจอง/ใบขาย = 400** ("ปูตัวนี้จองไว้ในใบที่ 3 — … เอาออกจากใบก่อน") — ลบ / ย้ายข้ามระบบ ก็เช่นกัน |
 | DELETE | `/crabs/:id` | ลบเพราะบันทึกผิด (ซ่อน) + แบ่งต้นทุนล็อตใหม่ |
@@ -168,6 +170,7 @@ Rule = { id, systemId, kind, defaultKey, locked, title, icon, priority, repeat(+
 | POST | `/feed/items/:id/buy` | `{ qty>0, priceTHB?, note? }` → 204 · ครั้งแรก = เริ่มนับสต็อกจากตรงนี้ |
 | POST | `/feed/items/:id/count` | `{ qty≥0 }` นับใหม่ (มีจริงเท่านี้) → 204 · เก็บส่วนต่างเป็น ADJUST |
 | GET | `/feed/items/:id/moves` | 40 รายการล่าสุด `[{ kind 'BUY'\|'USE'\|'ADJUST', qty(±), priceTHB, note, at, round: { feedDate, systemName } \| null }]` |
+| GET | `/feed/analysis?days(30–730 · ค่าเริ่มต้น 180)` | **วิเคราะห์อาหาร (P7)** ทั้งฟาร์ม → `FeedAnalysis` (ดูด้านล่าง) |
 | GET | `/feed/plan?systemId` | `{ plan \| null, crabs, preview: 14 วัน [{ date, feed, skip, itemId, override, dueAt, need }] }` |
 | PUT | `/feed/plan` | `{ systemId, onDays(1–14), offDays(0–14 · 0=ทุกวัน), anchorDate?('YYYY-MM-DD' ไม่ส่ง = วันนี้), timeOfDay, pattern 'SINGLE'\|'ALTERNATE', itemId, altItemId?(ALTERNATE บังคับ ต่างจาก itemId), piecesPerCrab(0–20), active? }` → เหมือน GET |
 | PUT | `/feed/plan/day` | `{ systemId, date, skip, itemId \| null }` ปรับวันเดียว · ทั้งคู่ว่าง = กลับไปตามแผน · `skip` วันที่มีรอบเปิดแต่ยังไม่ให้ = รอบนั้นเป็น SKIPPED |
@@ -181,6 +184,11 @@ Rule = { id, systemId, kind, defaultKey, locked, title, icon, priority, repeat(+
 | PATCH | `/feed/rounds/:id/entries` | **อย่างใดอย่างหนึ่ง** `{ crabIds[], result? , itemId?, pieces? }` (ปูที่ยังไม่มีแถว = สร้างให้) หรือ `{ fromItemId, itemId }` (ของไม่พอ → เปลี่ยนทั้งรอบ) → 204 · รอบที่ปิดแล้วแก้ได้ ≤ 30 วัน (สต็อกคำนวณใหม่ + ล้าง reviewPending) |
 
 `EatResult = 'ATE' | 'LITTLE' | 'NONE'` · งานแจ้งเตือนที่ผูกกับอาหาร: `FEEDING` (มีเมื่อรอบเปิดแต่ยังไม่ `fed` · กด "เสร็จแล้ว" ที่งาน = `fed` ให้) · `FEED_LOW` (พอไม่ถึง 2 รอบ · ปิดเองเมื่อซื้อ/นับใหม่ · กดเสร็จเองไม่ได้)
+**วิเคราะห์อาหาร (P7)** — กติกาอยู่ที่ `src/lib/feedAnalysis.ts` (pure · สำเนาที่หน้าเว็บ demo ใช้)
+- ไข่ขึ้นเร็วแค่ไหน: ปูไข่ (ไม่รวมที่ลบ) เช็ค `pct` 2 ครั้งติดกัน ห่าง 5–60 วัน = 1 ช่วง (ช่วงที่**จบ**ในช่วงที่ดู · ไข่ 100% แล้วไม่นับ) → % ต่อสัปดาห์ · อาหารที่กินในช่วงนั้น (รอบ `DONE` เท่านั้น: กินหมด 1 · กินน้อย ½ · ไม่กิน 0 · ต้อง ≥ 2 มื้อ) อาหารเดียว ≥ 70% = กลุ่มอาหารนั้น ไม่ถึง = ผสม (`itemId:null`) · สรุปได้เมื่อมี ≥ 2 อาหารที่มี ≥ 5 ช่วงจากปู ≥ 3 ตัว · ต่าง < 1%/สัปดาห์ = พอๆ กัน
+- กินหมดแค่ไหน: ต่ออาหาร `score` = (กินหมด + กินน้อย/2) ÷ มื้อ · สรุปได้เมื่อมี ≥ 2 อาหารที่มี ≥ 20 มื้อ · ต่าง < 3 จุด = พอๆ กัน
+- `FeedAnalysis = { from, to, days, items:[{id,name,emoji}], growth:{ groups:[{itemId\|null, intervals, crabs, perWeek}], verdict: {kind:'faster',fastId,slowId,diff} \| {kind:'same',ids,diff} \| {kind:'single',itemId\|null}(ให้อย่างเดียว) \| {kind:'not_enough',need:[{itemId,intervals,crabs}]} }, eating:{ items:[{itemId,meals,ate,little,none,score}], verdict: {kind:'better',bestId,worstId,diff} \| {kind:'same',ids,diff} \| {kind:'single',itemId} \| {kind:'not_enough',need:[{itemId,meals}]} }, totals:{crabs,intervals,meals} }`
+
 ⚠ ใหม่: `feeding_plan_missing` (menu `feed`, target `feed-plan`) · `feed_stock_missing` (`feed`, `feed-stock`) · `feed_low` (`feed`, `feed-stock`, count) · `feeding_review` (`crabs`, `crabs-feed-review`, count)
 
 ## น้ำ (P5) — `/water` · ต้องมีสิทธิ์ใช้งาน · ของคนอื่น = 404
