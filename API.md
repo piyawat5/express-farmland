@@ -54,18 +54,27 @@ redirect URI ที่ต้องลงทะเบียนในแต่ล�
 | GET | `/billing/me` | `{ access, slips[], subscriptions[] }` |
 | POST | `/billing/slips` | `{ planId, imageUrl, imagePublicId?, amount?, note? }` → 201 · มีสลิปรอตรวจได้ไม่เกิน 3 ใบ |
 | POST | `/uploads/image?kind=slip\|crab\|bug` | multipart field `image` (≤8MB) → `{ url, publicId }` · ไม่ได้ตั้ง Cloudinary = 503 |
+| GET | `/bugs` | (P8) เรื่องที่ฉันแจ้ง ล่าสุดก่อน `[{ id, excerpt, photo, pageTitle, status, userUnread, adminUnread, comments, lastActivityAt, createdAt }]` |
+| POST | `/bugs` | `{ body, photos?: [{url, publicId?}](≤3, ต้องเป็นรูปจาก /uploads), page?, pageTitle?, device?: { ua, screen, theme, app, lang } }` → `BugDetail` 201 · วันละ ≤10 เรื่อง (429) |
+| GET | `/bugs/:id` | `BugDetail` `{ …, device, comments: [{ id, fromAdmin, body\|null, photos, status\|null, createdAt }] }` · เปิดอ่าน = `userUnread:false` (⚠ `bug_reply` หาย) · ของคนอื่น = 404 |
+| POST | `/bugs/:id/comments` | `{ body, photos? }` → `BugDetail` · เรื่องที่ "แก้แล้ว"/"ขอข้อมูลเพิ่ม" = กลับเป็น `RECEIVED` |
+| GET | `/announcements` | (P8) ประกาศที่กำลังแสดง ใหม่สุดก่อน `[{ id, kind 'MUST_READ'\|'GENERAL', title, body, linkUrl, startsAt, expiresAt, acked }]` |
+| POST | `/announcements/:id/ack` | รับทราบ (ต้องรู้) / ปิดการ์ด (ทั่วไป) → 204 · กดซ้ำได้ |
+| GET | `/learn/videos` | (P8) `{ [เรื่องสอน]: url }` — ลิงก์คลิปสอนที่แอดมินใส่ |
+
+แจ้งปัญหา/ประกาศ/คลิปอยู่ชั้นนี้ (ยังไม่จ่ายก็แจ้งปัญหาได้) · สถานะเรื่องที่แจ้ง: `RECEIVED` รับเรื่องแล้ว · `FIXING` กำลังแก้ · `FIXED` แก้แล้ว · `NEED_INFO` ขอข้อมูลเพิ่ม
 
 ## มีสิทธิ์ใช้งาน
 | Method | Path | หมายเหตุ |
 |---|---|---|
 | GET | `/attention` | `{ items: [{ key, level 'setup'\|'warn'\|'urgent', menu, target, title, cta }] }` — ป้าย ⚠ นำทาง · `target` = ค่า `data-attention` ของปุ่มเป้าหมาย |
 
-key ที่มีตอนนี้: `system_missing` (menu `crabs`, target `crabs-add-system`) · `first_lot_missing` (`crabs`, `crabs-intake`) · `lot_cost_missing` (`crabs`, `crabs-lots`, มี `count`) · `notify_email_missing` (`profile`, `profile-notify-email`) · `tasks_due` (`reminders`, `reminders-today`, มี `count` = งานที่ถึงเวลาแล้ว · `level: 'urgent'` เมื่อมีงานด่วนมาก)
+key ที่มีตอนนี้: `bug_reply` (P8 · `community`, `community-bugs`, มี `count` · ทีมงานตอบ/เปลี่ยนสถานะเรื่องที่แจ้งแล้วยังไม่ได้เปิดอ่าน) · `system_missing` (menu `crabs`, target `crabs-add-system`) · `first_lot_missing` (`crabs`, `crabs-intake`) · `lot_cost_missing` (`crabs`, `crabs-lots`, มี `count`) · `notify_email_missing` (`profile`, `profile-notify-email`) · `tasks_due` (`reminders`, `reminders-today`, มี `count` = งานที่ถึงเวลาแล้ว · `level: 'urgent'` เมื่อมีงานด่วนมาก)
 
 ## แอดมิน (`/admin`)
 | Method | Path | หมายเหตุ |
 |---|---|---|
-| GET | `/admin/overview` | `{ totalUsers, newUsers(7 วัน), activeCustomers, expiringSoon(≤7 วัน), waiting(ยังไม่เคยมีสิทธิ์), pendingSlips }` |
+| GET | `/admin/overview` | `{ totalUsers, newUsers(7 วัน), activeCustomers, expiringSoon(≤7 วัน), waiting(ยังไม่เคยมีสิทธิ์), pendingSlips, unreadBugs, openBugs, pendingIdeas }` |
 | GET | `/admin/users?q&access=active\|none\|expired\|pending&skip&take` | `{ total, items: [user + access + oauthAccounts] }` |
 | GET | `/admin/users/:id` | `{ user, access, subscriptions[], slips[] }` |
 | PATCH | `/admin/users/:id` | `{ active?, role?, name? }` · ระงับ = เตะออกทุกเครื่อง · ระงับ/ลดสิทธิ์ตัวเองไม่ได้ |
@@ -77,6 +86,15 @@ key ที่มีตอนนี้: `system_missing` (menu `crabs`, target `c
 | GET/POST | `/admin/plans` | `{ code, name, description?, priceTHB, durationDays?(null=ซื้อขาด), active?, sortOrder? }` |
 | PATCH/DELETE | `/admin/plans/:id` | ลบได้เฉพาะแพ็กเกจที่ยังไม่มีคนใช้ (ที่ใช้แล้วให้ `active:false`) |
 | GET/PUT | `/admin/settings` | ตั้งค่าร้าน · `promptPayId` = เบอร์ 10 หลัก หรือเลขบัตร 13 หลัก · ลิงก์ใส่ `''` = ลบ |
+| GET | `/admin/bugs?status=OPEN\|RECEIVED\|FIXING\|FIXED\|NEED_INFO&unread=1&skip&take` | (P8) `{ total, counts{สถานะ: n}, unread, items: [BugRow + user{id,name,email}] }` · ยังไม่อ่านขึ้นก่อน · `OPEN` = ยังไม่แก้ |
+| GET | `/admin/bugs/:id` | `BugDetail + user` · เปิดอ่าน = `adminUnread:false` |
+| POST | `/admin/bugs/:id/reply` | `{ body?, photos?, status? }` ต้องมีอย่างน้อย 1 อย่าง (ข้อความว่าง+สถานะเดิม = 400) → `BugDetail` · ผู้ใช้ได้ ⚠ `bug_reply` |
+| GET | `/admin/ideas?status&sort=top\|new&skip&take` | (P8) เหมือน `/ideas` + `authorId`, `authorEmail` |
+| PATCH/DELETE | `/admin/ideas/:id` | `{ status?, reply?(null=ลบคำตอบ), title?, body? }` · ตอบใหม่ = `repliedAt` ตอนนี้ |
+| GET/POST | `/admin/announcements` | (P8) GET = ทุกประกาศ + `ackCount`(นับแค่ลูกค้า) + `state 'SCHEDULED'\|'ACTIVE'\|'EXPIRED'` · POST `{ kind, title, body, linkUrl?(http/https), startsAt?(ว่าง=ทันที), expiresAt?(ว่าง=ไม่หมด) }` · แอดมินที่ประกาศ = รับทราบแล้ว (ไม่เด้งใส่ตัวเอง) · หมดอายุก่อนเริ่ม = 400 |
+| PATCH/DELETE | `/admin/announcements/:id` | แก้/ลบ |
+| POST | `/admin/announcements/:id/reset-acks` | ล้างการรับทราบของลูกค้า → ป๊อปอัป/การ์ดกลับมาอีกรอบ |
+| GET/PUT | `/admin/content` | (P8) `{ nowBuilding: string\|null, videos: { [เรื่องสอน]: url } }` · PUT `videos` = แทนทั้งชุด · ค่า `''` = ลบลิงก์ · key = `[a-z0-9_-]` · ลิงก์ http/https เท่านั้น |
 
 ## ฟาร์ม (P2) — ต้องมีสิทธิ์ใช้งาน · เห็นได้เฉพาะของตัวเอง (ของคนอื่น = 404)
 
@@ -248,6 +266,16 @@ Rule = { id, systemId, kind, defaultKey, locked, title, icon, priority, repeat(+
 
 ค่าไฟ/เดือน = Σ(วัตต์ × จำนวน × ชม./วัน × 30 ÷ 1000) × ค่าไฟต่อหน่วย (ปัดบาท · เดือนละ 30 วันเท่ากัน)
 **ส่วนแบ่งค่าอาหาร/ค่าฟาร์มของล็อต**: ค่าใช้จ่ายที่ไม่ใช่ซื้อปู/รายรับ รวมเป็นกองรายเดือน ÷ จำนวน "ตัว-วัน" ของปูทั้งฟาร์มในเดือนนั้น × ตัว-วันของล็อต (ตั้งแต่วันรับเข้าล็อต ถึงวันขาย/ตาย/วันนี้) · เดือนที่ไม่มีปู = ไม่มีใครรับ (`src/lib/profit.ts` — สำเนาที่หน้าเว็บ)
+
+## ไอเดีย (P8) — `/ideas` · ต้องมีสิทธิ์ใช้งาน · ทุกคนเห็นของทุกคน
+| Method | Path | หมายเหตุ |
+|---|---|---|
+| GET | `/ideas?status&mine=1&sort=top\|new&skip&take` | `{ total, counts{PENDING,IN_PROGRESS,DONE,DECLINED}, nowBuilding, items: [Idea] }` · ไม่กรองสถานะ = ที่ยังเปิด (รอพิจารณา/กำลังทำ) ขึ้นก่อน แล้วตาม ❤ หรือใหม่สุด · `counts` ไม่ขึ้นกับสถานะที่กรอง |
+| POST | `/ideas` | `{ title(3–120), body? }` → `Idea` 201 · ผู้เสนอได้ ❤ 1 เอง · วันละ ≤5 (429) |
+| PATCH/DELETE | `/ideas/:id` | ของตัวเอง + ยัง `PENDING` เท่านั้น (ทีมงานรับเรื่องแล้ว = 400 · ของคนอื่น = 404) · ลบ = ❤ หายด้วย |
+| PUT | `/ideas/:id/like` | `{ liked: boolean }` (สถานะที่ต้องการ ไม่ใช่สลับ) → `{ likeCount, liked }` · ยิงซ้ำ/พร้อมกันได้ผลเดิม |
+
+`Idea` = `{ id, title, body, status, reply, repliedAt, likeCount, liked, mine, authorName('สมาชิก' ถ้าไม่มีชื่อ), createdAt, updatedAt }` — **ไม่มีอีเมลผู้เขียน** (หลังบ้านเท่านั้น)
 
 ## Realtime (WebSocket) — `ws(s)://<api-host>/ws`
 ต่อด้วย subprotocol `['jwt', <accessToken>]` (ผิด/หมดอายุ = ปิดด้วย 4401 → refresh แล้วต่อใหม่) · server ส่ง `{ t:'hello' }`

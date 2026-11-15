@@ -9,7 +9,9 @@
 //    P4            อาหาร (สต็อก · แผน · รอบให้อาหาร · ผลการกินรายตัว)
 //    P5            น้ำ (ค่าที่วัด · กฎปรุงน้ำ · ผลวัด)
 //    P6            ขาย (ใบขาย/จอง · รายตัว) · บัญชี (ลงเอง + ค่าไฟ) — ซื้อปู/ซื้ออาหาร/ขาย อ่านจากต้นทาง
-//    P7–P9         หน้าแรก · ชุมชน · หมู่บ้านฟาร์ม
+//    P7            หน้าแรก (ไม่มีตารางใหม่ — จำใน User.uiPrefs)
+//    P8            ชุมชน (ไอเดีย + ถูกใจ · แจ้งปัญหา + ตอบกลับ · ประกาศ + รับทราบ) — ลิงก์คลิปสอนอยู่ใน AppSetting "content"
+//    P9            หมู่บ้านฟาร์ม
 // ════════════════════════════════════════════════════════════════════
 
 generator client {
@@ -84,6 +86,12 @@ model User {
   sales         Sale[]
   ledgerEntries LedgerEntry[]
   electricSetup ElectricSetup?
+
+  // ── ชุมชน (P8) — ไอเดีย/ถูกใจ/แจ้งปัญหา/รับทราบประกาศ ──
+  ideas            Idea[]
+  ideaLikes        IdeaLike[]
+  bugReports       BugReport[]
+  announcementAcks AnnouncementAck[]
 }
 
 enum Role {
@@ -940,4 +948,136 @@ model ElectricSetup {
   startMonth String   @db.Char(7)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  ชุมชน (P8) — ข้ามฟาร์มได้ (ทุกคนเห็นไอเดียของกันและกัน) → อ่านชื่อผู้เขียนด้วย select เฉพาะ name เท่านั้น
+//  ข้อความ "ตอนนี้กำลังพัฒนา" + ลิงก์คลิปสอน = AppSetting key "content" (ไม่ใช่ตาราง)
+// ─────────────────────────────────────────────────────────────────────
+
+/// ไอเดียจากผู้ใช้ — ทุกคนเห็น กด ❤ ได้คนละครั้ง
+model Idea {
+  id        Int        @id @default(autoincrement())
+  author    User       @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  authorId  Int
+  title     String     @db.VarChar(120)
+  body      String?    @db.Text
+  status    IdeaStatus @default(PENDING)
+  /// คำตอบจากทีมงาน (ทุกคนเห็นใต้ไอเดีย)
+  reply     String?    @db.Text
+  repliedAt DateTime?
+  /// สำเนาจำนวน ❤ (เรียงตามยอดถูกใจได้โดยไม่ต้องนับทุกครั้ง) — แก้คู่กับ IdeaLike ใน transaction เดียวกัน
+  likeCount Int        @default(0)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  likes IdeaLike[]
+
+  @@index([authorId])
+  @@index([status])
+}
+
+enum IdeaStatus {
+  PENDING // รอพิจารณา
+  IN_PROGRESS // กำลังทำ
+  DONE // เสร็จแล้ว
+  DECLINED // ยังไม่ทำ
+}
+
+model IdeaLike {
+  idea      Idea     @relation(fields: [ideaId], references: [id], onDelete: Cascade)
+  ideaId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  createdAt DateTime @default(now())
+
+  @@id([ideaId, userId])
+  @@index([userId])
+}
+
+/// แจ้งปัญหา — ผู้ใช้เห็นแค่ของตัวเอง แอดมินเห็นทั้งหมด · ตอบกลับกันได้ในเรื่องนั้น
+model BugReport {
+  id             Int       @id @default(autoincrement())
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         Int
+  body           String    @db.Text
+  /// [{ url, publicId? }] ไม่เกิน 3 รูป
+  photos         Json?
+  /// หน้าที่เกิดปัญหา (หน้าเว็บเก็บให้เอง) เช่น "/crabs" + ชื่อหน้า "กล่องปู"
+  page           String?   @db.VarChar(300)
+  pageTitle      String?   @db.VarChar(100)
+  /// เครื่องที่ใช้ { ua, screen, theme, app } — หน้าเว็บเก็บให้เอง
+  device         Json?
+  status         BugStatus @default(RECEIVED)
+  /// มีความเคลื่อนไหวจากทีมงานที่ผู้ใช้ยังไม่ได้เปิดอ่าน (→ ⚠ bug_reply)
+  userUnread     Boolean   @default(false)
+  /// เรื่องใหม่ / ผู้ใช้ตอบกลับ ที่แอดมินยังไม่ได้เปิดอ่าน (→ ตัวเลขแดงที่เมนูหลังบ้าน)
+  adminUnread    Boolean   @default(true)
+  lastActivityAt DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  comments BugComment[]
+
+  @@index([userId, lastActivityAt])
+  @@index([status, lastActivityAt])
+}
+
+enum BugStatus {
+  RECEIVED // รับเรื่องแล้ว
+  FIXING // กำลังแก้
+  FIXED // แก้แล้ว
+  NEED_INFO // ขอข้อมูลเพิ่ม
+}
+
+/// ข้อความในเรื่องที่แจ้ง — fromAdmin = ทีมงาน (ไม่เก็บว่าแอดมินคนไหน ผู้ใช้เห็นเป็น "ทีมงาน")
+model BugComment {
+  id        Int        @id @default(autoincrement())
+  bug       BugReport  @relation(fields: [bugId], references: [id], onDelete: Cascade)
+  bugId     Int
+  fromAdmin Boolean    @default(false)
+  /// ว่างได้ ถ้าเป็นแค่การเปลี่ยนสถานะ
+  body      String?    @db.Text
+  photos    Json?
+  /// ทีมงานเปลี่ยนสถานะพร้อมข้อความนี้
+  status    BugStatus?
+  createdAt DateTime   @default(now())
+
+  @@index([bugId, createdAt])
+}
+
+/// ประกาศจากทีมงาน — MUST_READ = ป๊อปอัปจนกว่าจะกดรับทราบ · GENERAL = การ์ดบนหน้าแรก
+model Announcement {
+  id        Int              @id @default(autoincrement())
+  kind      AnnouncementKind @default(GENERAL)
+  title     String           @db.VarChar(150)
+  body      String           @db.Text
+  /// ลิงก์ประกอบ (เช่น คลิป) — ไม่บังคับ
+  linkUrl   String?          @db.VarChar(500)
+  startsAt  DateTime         @default(now())
+  /// null = ไม่หมดอายุ
+  expiresAt DateTime?
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  acks AnnouncementAck[]
+
+  @@index([startsAt])
+}
+
+enum AnnouncementKind {
+  MUST_READ
+  GENERAL
+}
+
+/// รับทราบ (MUST_READ) / ปิดการ์ด (GENERAL) — คนละครั้ง
+model AnnouncementAck {
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  announcementId Int
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         Int
+  ackedAt        DateTime     @default(now())
+
+  @@id([announcementId, userId])
+  @@index([userId])
 }

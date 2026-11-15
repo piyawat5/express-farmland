@@ -6,11 +6,16 @@ import { idParam } from '../lib/validation';
 import { validate } from '../middleware/validate';
 import * as subs from '../services/subscription.service';
 import { getShopSettings, updateShopSettings } from '../services/settings.service';
+import * as ideas from '../services/community/idea.service';
+import * as bugs from '../services/community/bug.service';
+import * as news from '../services/community/announcement.service';
+import { getContent, updateContent } from '../services/community/content.service';
+import { flag, httpUrl, ideaStatus, photosBody } from './community';
 
 // ════════════════════════════════════════════════════════════════════
 //  /api/admin — หลังบ้าน (requireAdmin ครอบทั้ง router ที่ routes/index.ts)
 //  P1: ภาพรวม · ผู้ใช้ & สิทธิ์ · สลิป · แพ็กเกจ · ตั้งค่าร้าน
-//  P8 จะเพิ่ม: บัค · ไอเดีย · ประกาศ · คลิปสอน
+//  P8: แจ้งปัญหา · ไอเดีย · ประกาศ · คลิปสอน (+ ข้อความ "ตอนนี้กำลังพัฒนา")
 // ════════════════════════════════════════════════════════════════════
 
 const router = Router();
@@ -23,7 +28,8 @@ const paging = {
 router.get(
   '/overview',
   asyncHandler(async (_req, res) => {
-    res.json(await subs.adminOverview());
+    const [o, b, pendingIdeas] = await Promise.all([subs.adminOverview(), bugs.adminBugCounts(), ideas.pendingIdeaCount()]);
+    res.json({ ...o, unreadBugs: b.unread, openBugs: b.open, pendingIdeas });
   }),
 );
 
@@ -200,6 +206,154 @@ router.put(
   }),
   asyncHandler(async (req, res) => {
     res.json(await updateShopSettings(req.body));
+  }),
+);
+
+// ── แจ้งปัญหา (P8) ────────────────────────────────────────────────────
+
+const bugStatus = z.enum(['RECEIVED', 'FIXING', 'FIXED', 'NEED_INFO']);
+
+router.get(
+  '/bugs',
+  validate({ query: z.object({ status: z.union([bugStatus, z.literal('OPEN')]).optional(), unread: flag.optional(), ...paging }) }),
+  asyncHandler(async (req, res) => {
+    res.json(await bugs.adminListBugs(req.query as unknown as bugs.AdminBugQuery));
+  }),
+);
+
+/** เปิดอ่าน = ล้าง "ยังไม่ได้อ่าน" ฝั่งแอดมิน */
+router.get(
+  '/bugs/:id',
+  validate({ params: idParam }),
+  asyncHandler(async (req, res) => {
+    res.json(await bugs.adminGetBug(Number(req.params.id)));
+  }),
+);
+
+/** ตอบ และ/หรือ เปลี่ยนสถานะ (ผู้ใช้เห็นในเรื่องนั้น + ⚠ ที่เมนู) */
+router.post(
+  '/bugs/:id/reply',
+  validate({
+    params: idParam,
+    body: z.object({
+      body: z.string().trim().max(4000).nullable().optional(),
+      photos: photosBody.optional(),
+      status: bugStatus.optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    res.json(await bugs.adminReplyBug(Number(req.params.id), req.body));
+  }),
+);
+
+// ── ไอเดีย (P8) ───────────────────────────────────────────────────────
+
+router.get(
+  '/ideas',
+  validate({ query: z.object({ status: ideaStatus.optional(), sort: z.enum(['top', 'new']).optional(), ...paging }) }),
+  asyncHandler(async (req, res) => {
+    res.json(await ideas.listIdeas(req.user!, req.query as unknown as ideas.IdeaQuery, { admin: true }));
+  }),
+);
+
+router.patch(
+  '/ideas/:id',
+  validate({
+    params: idParam,
+    body: z.object({
+      status: ideaStatus.optional(),
+      reply: z.string().trim().max(2000).nullable().optional(),
+      title: z.string().trim().min(3).max(120).optional(),
+      body: z.string().trim().max(3000).nullable().optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    res.json(await ideas.adminUpdateIdea(req.user!, Number(req.params.id), req.body));
+  }),
+);
+
+router.delete(
+  '/ideas/:id',
+  validate({ params: idParam }),
+  asyncHandler(async (req, res) => {
+    await ideas.adminRemoveIdea(Number(req.params.id));
+    res.status(204).end();
+  }),
+);
+
+// ── ประกาศ (P8) ───────────────────────────────────────────────────────
+
+const announcementBody = z.object({
+  kind: z.enum(['MUST_READ', 'GENERAL']),
+  title: z.string().trim().min(1, 'ใส่หัวข้อ').max(150),
+  body: z.string().trim().min(1, 'ใส่ข้อความ').max(5000),
+  linkUrl: z.union([httpUrl, z.literal('').transform(() => null), z.null()]).optional(),
+  startsAt: z.coerce.date().nullable().optional(),
+  expiresAt: z.coerce.date().nullable().optional(),
+});
+
+router.get(
+  '/announcements',
+  asyncHandler(async (_req, res) => {
+    res.json(await news.adminList());
+  }),
+);
+
+router.post(
+  '/announcements',
+  validate({ body: announcementBody }),
+  asyncHandler(async (req, res) => {
+    res.status(201).json(await news.adminCreate(req.user!.id, req.body));
+  }),
+);
+
+router.patch(
+  '/announcements/:id',
+  validate({ params: idParam, body: announcementBody.partial() }),
+  asyncHandler(async (req, res) => {
+    res.json(await news.adminUpdate(Number(req.params.id), req.body));
+  }),
+);
+
+router.delete(
+  '/announcements/:id',
+  validate({ params: idParam }),
+  asyncHandler(async (req, res) => {
+    await news.adminRemove(Number(req.params.id));
+    res.status(204).end();
+  }),
+);
+
+/** ล้างการรับทราบ → ทุกคนเห็นป๊อปอัป/การ์ดอีกรอบ */
+router.post(
+  '/announcements/:id/reset-acks',
+  validate({ params: idParam }),
+  asyncHandler(async (req, res) => {
+    await news.adminResetAcks(Number(req.params.id));
+    res.status(204).end();
+  }),
+);
+
+// ── เนื้อหา: "ตอนนี้กำลังพัฒนา" + ลิงก์คลิปสอน (P8) ────────────────────
+
+router.get(
+  '/content',
+  asyncHandler(async (_req, res) => {
+    res.json(await getContent());
+  }),
+);
+
+router.put(
+  '/content',
+  validate({
+    body: z.object({
+      nowBuilding: z.string().trim().max(200).nullable().optional(),
+      // { [เรื่องสอน]: ลิงก์ } — ค่าว่าง = ลบลิงก์เรื่องนั้น
+      videos: z.record(z.string().regex(/^[a-z0-9_-]{1,40}$/), z.union([httpUrl, z.literal('')])).optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    res.json(await updateContent(req.body));
   }),
 );
 

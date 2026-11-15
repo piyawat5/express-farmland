@@ -11,12 +11,13 @@ import { reminderRouter, schedulerRouter } from './reminders';
 import { feedRouter } from './feed';
 import { waterRouter } from './water';
 import { ledgerRouter, saleRouter } from './sales';
+import { announcementRouter, bugRouter, ideaRouter, learnRouter } from './community';
 import { markDirty } from '../services/reminders/task.service';
 
 // ════════════════════════════════════════════════════════════════════
 //  ลำดับชั้นสิทธิ์ (สำคัญ — เพิ่ม route ใหม่ให้ถูกชั้น):
 //    1. public           health, auth, scheduler (ใช้ secret แทนการล็อกอิน)
-//    2. ล็อกอินแล้ว        billing (หน้ารอเปิดใช้งาน), uploads, admin (+requireAdmin)
+//    2. ล็อกอินแล้ว        billing (หน้ารอเปิดใช้งาน), uploads, admin (+requireAdmin), แจ้งปัญหา, ประกาศ, คลิปสอน
 //    3. มีสิทธิ์ใช้งาน      ทุกอย่างของฟาร์ม
 // ════════════════════════════════════════════════════════════════════
 
@@ -33,6 +34,10 @@ api.use(requireAuth);
 api.use('/billing', billingRoutes);
 api.use('/uploads', uploadRoutes);
 api.use('/admin', requireAdmin, adminRoutes);
+// ชุมชน (P8) — ยังไม่ได้จ่ายก็แจ้งปัญหา/อ่านประกาศได้
+api.use('/bugs', bugRouter);
+api.use('/announcements', announcementRouter);
+api.use('/learn', learnRouter);
 
 // ── 3. ต้องมีสิทธิ์ใช้งาน ────────────────────────────────────────────────
 api.use(requireActiveSubscription);
@@ -58,5 +63,7 @@ api.use('/water', waterRouter);
 // ขาย & บัญชี (P6)
 api.use('/sales', saleRouter);
 api.use('/ledger', ledgerRouter);
+// ไอเดีย (P8)
+api.use('/ideas', ideaRouter);
 
 export default api;

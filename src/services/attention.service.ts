@@ -3,6 +3,7 @@ import type { AuthUser } from './auth.service';
 import { dueSummary } from './reminders/task.service';
 import { forecast } from './feed/stock.service';
 import { waterAttention } from './water/water.service';
+import { unreadForUser } from './community/bug.service';
 
 // ════════════════════════════════════════════════════════════════════
 //  ป้าย ⚠ นำทาง — รวม "สิ่งที่ยังไม่ได้ทำ/ยังไม่ได้ตั้งค่า" ไว้ที่เดียว
@@ -31,13 +32,14 @@ export type AttentionItem = {
 
 export async function getAttention(user: AuthUser): Promise<AttentionItem[]> {
   const items: AttentionItem[] = [];
-  const [me, systems, lotsNoCost, crabs, due] = await Promise.all([
+  const [me, systems, lotsNoCost, crabs, due, bugs] = await Promise.all([
     prisma.user.findUnique({ where: { id: user.id }, select: { notifyEmail: true } }),
     prisma.crabSystem.count({ where: { ownerId: user.id } }),
     // ล็อตที่มีปูแล้วแต่ยังไม่ใส่ราคา (ลืมแล้วไปเจอตอนขาย = ปัญหาใหญ่ใน v1)
     prisma.crabLot.count({ where: { ownerId: user.id, totalCost: null, crabs: { some: { deletedAt: null } } } }),
     prisma.crab.count({ where: { ownerId: user.id, deletedAt: null } }),
     dueSummary(user.id),
+    unreadForUser(user.id),
   ]);
 
   // งานแจ้งเตือนที่ถึงเวลาแล้ว (P3) — มีงานด่วน = urgent (หน้าเว็บเด้งป๊อปอัปทุก 1 ชม.)
@@ -163,6 +165,19 @@ export async function getAttention(user: AuthUser): Promise<AttentionItem[]> {
       title: lotsNoCost === 1 ? 'มี 1 ล็อตที่ยังไม่ใส่ราคา' : `มี ${lotsNoCost} ล็อตที่ยังไม่ใส่ราคา`,
       cta: 'ใส่ราคา',
       count: lotsNoCost,
+    });
+  }
+
+  // ── แจ้งปัญหา (P8): ทีมงานตอบ/เปลี่ยนสถานะแล้ว ผู้ใช้ยังไม่ได้เปิดอ่าน ──
+  if (bugs.count > 0) {
+    items.push({
+      key: 'bug_reply',
+      level: 'warn',
+      menu: 'community',
+      target: 'community-bugs',
+      title: bugs.needInfo ? 'ทีมงานขอข้อมูลเพิ่มเรื่องที่คุณแจ้ง' : 'ทีมงานตอบเรื่องที่คุณแจ้งแล้ว',
+      cta: 'อ่าน',
+      count: bugs.count,
     });
   }
 
