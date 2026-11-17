@@ -225,7 +225,7 @@ async function doSync(ownerId: number, now: Date) {
     .map((f) => ({
       ownerId,
       kind: 'FEED_LOW' as const,
-      title: `${f.name}ใกล้หมด — ซื้อเพิ่ม`,
+      title: `${f.name}ใกล้หมด ซื้อเพิ่ม`,
       priority: 'MEDIUM' as const,
       dueAt: now,
       openKey: `feed:${f.id}`,

@@ -23,7 +23,10 @@
 
 ## ขั้น B — backend (subdomain API)
 1. **เอาโค้ดขึ้น** (เลือก 1 วิธี)
-   - **Git (แนะนำ):** ต้อง push branch `v2` ขึ้น GitHub ก่อน (บอก Claude ให้ push ได้) → Plesk → subdomain API → **Git** → Repository URL ของ `express-farmland` → Branch **`v2`** → Deployment path = โฟลเดอร์หลักของ subdomain
+   - **Git (แนะนำ — push `v2` ขึ้น GitHub แล้ว 2026-11-16):** Plesk → subdomain API → **Git** → **Remote repository** → Repository URL `https://github.com/piyawat5/express-farmland.git` (repo สาธารณะ ไม่ต้องใส่รหัส) → Deployment mode **Manual** → Deployment directory = โฟลเดอร์หลักของ subdomain → **Create**
+     - ⚠️ หน้าสร้างไม่มีช่องเลือก branch — Plesk ดึง `main` (= โค้ด v1) มาก่อนเสมอ จึงต้องเลือก **Manual** ไม่งั้นมันวางโค้ด v1 ลงโฟลเดอร์ทันที
+     - สร้างเสร็จ → ในหน้า repository กดที่ **Branch** (ขึ้นว่า `main`) → เลือก **`v2`** → กด **Deploy** (ตรวจว่าในโฟลเดอร์มี `src/services/village/`)
+     - มีโค้ดใหม่ทีหลัง: **Pull Updates** → **Deploy** → ทำข้อ 4 ซ้ำ
    - **อัปโหลดเอง:** zip โฟลเดอร์ backend (ไม่เอา `node_modules`, `dist`, `.env`) → File Manager → อัปโหลด → Extract
 2. Plesk → subdomain API → **Node.js**
    - Node.js version: **20 ขึ้นไป** (ขั้นต่ำ 18) · Application mode: **production**
@@ -35,7 +38,7 @@
    | `NODE_ENV` | `production` |
    | `DATABASE_URL` | เหมือนใน `.env` ของเครื่อง dev (DB v2) — `@` ในรหัสผ่านเขียนเป็น `%40` |
    | `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | สุ่มใหม่ 2 ค่า: `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` |
-   | `FRONTEND_URL` | `https://farmland2.family-sivarom.com` (หน้าเว็บจริง — ใช้ตรวจ CORS + WebSocket + ลิงก์ในอีเมล) |
+   | `FRONTEND_URL` | `https://farmland2.family-sivarom.com` (หน้าเว็บจริง — WebSocket รับเฉพาะเว็บนี้ · ล็อกอินโซเชียลเด้งกลับมาที่นี่ · ลิงก์ในอีเมล) |
    | `OAUTH_CALLBACK_BASE` | `https://api-farmland2.family-sivarom.com/api/auth/oauth` |
    | `SCHEDULER_SECRET` | สุ่มยาว ๆ 1 ค่า (ใช้ในขั้น B6) |
    | `ENABLE_INTERNAL_CRON` | `false` (Plesk เรียกแทน) |
@@ -52,11 +55,7 @@
 7. **เช็ค:** เปิด `https://api-farmland2.family-sivarom.com/api/health` → ต้องเห็น `"status":"ok"` และ `"realtime":{"enabled":true,"path":"/ws"}`
 
 ## ขั้น C — หน้าเว็บจริง
-1. ที่เครื่อง (โฟลเดอร์ `farmland-web`, branch `v2`) — build โดยชี้ไปที่ API ใหม่ (ค่านี้ทับ `.env.production` เฉพาะครั้งนี้):
-   ```bash
-   VITE_API_BASE_URL=https://api-farmland2.family-sivarom.com/api npm run build
-   ```
-   (PowerShell: `$env:VITE_API_BASE_URL='https://api-farmland2.family-sivarom.com/api'; npm run build`)
+1. ที่เครื่อง (โฟลเดอร์ `farmland-web`, branch `v2`) — `npm run build` ตามปกติ · ✅ ตั้งไว้แล้ว (2026-11-16): ไฟล์ `.env.production.local` (ไม่ขึ้น git) ทับ `VITE_API_BASE_URL` เป็น `https://api-farmland2.family-sivarom.com/api` → build กี่ครั้งก็ชี้ API ใหม่จนกว่าจะลบไฟล์นี้ (ขั้น E)
 2. zip **ของข้างใน** `dist/` (รวมไฟล์ `.htaccess` ที่ซ่อนอยู่) → Plesk → subdomain หน้าเว็บ → File Manager → อัปโหลดลงโฟลเดอร์หลัก (`httpdocs`) → Extract
 3. Apache & nginx Settings ของ subdomain นี้ → **Proxy mode ต้องติ๊กไว้** (ค่าเริ่มต้น) — ไม่งั้นกดรีเฟรชหน้าลึก ๆ แล้ว 404
 4. **ล็อกอินโซเชียล** — เพิ่มที่อยู่ใหม่ (ของเดิม v1 เก็บไว้):
@@ -85,7 +84,7 @@
 ## ขั้น E — ย้ายจริง (หลังพอใจแล้ว)
 1. บอกเพื่อน (เจ้าของฟาร์มที่ใช้ v1) ว่าข้อมูลเดิมไม่ย้าย — ถ้าอยากเก็บ ใช้ปุ่มส่งออก CSV ของ v1 ก่อน
 2. **ให้ v2 ใช้ชื่อโดเมนเดิม (แนะนำ — ลูกค้าจำที่อยู่เดิมได้):**
-   - โดเมนหน้าเว็บเดิม `farm-land…` → ลบไฟล์ v1 ใน `httpdocs` (เก็บ zip สำรองไว้ก่อน) → อัปโหลด `dist/` ที่ build ด้วย API **เดิม** (`npm run build` เฉย ๆ — `.env.production` ชี้ `api-farmland.family-sivarom.com` ไว้แล้ว)
+   - โดเมนหน้าเว็บเดิม `farm-land…` → ลบไฟล์ v1 ใน `httpdocs` (เก็บ zip สำรองไว้ก่อน) → อัปโหลด `dist/` ที่ build ด้วย API **เดิม** (⚠️ **ลบ `farmland-web/.env.production.local` ก่อน** แล้ว `npm run build` — `.env.production` ชี้ `api-farmland.family-sivarom.com` ไว้แล้ว)
    - โดเมน API เดิม `api-farmland…` → Git เปลี่ยน branch เป็น `main` (หลังรวม v2 เข้า main ในข้อ 3) หรืออัปโหลดโค้ด v2 → ใส่ Environment variables ชุดเดียวกับขั้น B3 แต่ `FRONTEND_URL` / `OAUTH_CALLBACK_BASE` เป็นโดเมนเดิม + **`DATABASE_URL` เป็น DB v2** → NPM install → build → Restart · Proxy mode ปิด (ปิดอยู่แล้วจาก v1)
    - Scheduled Task เดิม (v1 วันละครั้ง 12:30) → แก้ URL/secret ให้ตรง v2 และตั้ง **ทุก 15 นาที** · ลบ task ของ subdomain ทดสอบ
    - subdomain ทดสอบ (`farmland2`, `api-farmland2`) ลบได้ หรือ redirect ไปโดเมนเดิม

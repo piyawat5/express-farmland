@@ -59,10 +59,10 @@ async function sendDigest(u: DigestUser, now: Date, opts: { test?: boolean } = {
     return `<h3 style="color:${g.color}; margin: 18px 0 4px; font-size: 17px;">${g.label} (${list.length})</h3><ul style="padding-left: 20px; margin: 0;">${items}</ul>`;
   }).join('');
 
-  const hello = `<p style="font-size: 16px; color: #334155;">สวัสดีครับ${u.name ? ` คุณ${escapeHtml(u.name)}` : ''} — ${
+  const hello = `<p style="font-size: 16px; color: #334155;">สวัสดีครับ${u.name ? ` คุณ${escapeHtml(u.name)}` : ''} ${
     tasks.length ? `มีงานที่ยังไม่ได้ทำ <b>${tasks.length} เรื่อง</b>` : 'ตอนนี้ไม่มีงานค้าง ✓'
   }</p>`;
-  const testNote = opts.test ? '<p style="color:#64748b; font-size: 14px;">(อีเมลทดสอบ — ถ้าได้รับฉบับนี้ แปลว่าตั้งค่าอีเมลถูกต้องแล้ว)</p>' : '';
+  const testNote = opts.test ? '<p style="color:#64748b; font-size: 14px;">(อีเมลทดสอบ ถ้าได้รับฉบับนี้ แปลว่าตั้งค่าอีเมลถูกต้องแล้ว)</p>' : '';
   const button = `<div style="text-align:center; margin-top: 22px;"><a href="${env.FRONTEND_URL}/reminders" style="display:inline-block; background:#0d9488; color:#fff; text-decoration:none; padding: 12px 26px; border-radius: 10px; font-size: 17px;">เปิดดูงานทั้งหมด</a></div>`;
 
   const high = tasks.filter((t) => t.priority === 'HIGH').length;

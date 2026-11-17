@@ -34,7 +34,7 @@ function assertCheckRules(type: CrabType, c: CheckInput) {
   if (c.photoUrl && type !== 'SOFT' && c.pct == null) {
     throw badRequest(type === 'EGG' ? 'มีรูปใหม่แล้ว ใส่ % ไข่ด้วย' : 'มีรูปใหม่แล้ว ใส่ % เนื้อด้วย');
   }
-  if (c.pct != null && (c.pct < 0 || c.pct > 100)) throw badRequest('% ต้องอยู่ระหว่าง 0–100');
+  if (c.pct != null && (c.pct < 0 || c.pct > 100)) throw badRequest('% ต้องอยู่ระหว่าง 0-100');
   if (c.weightG != null && (c.weightG <= 0 || c.weightG > 5000)) throw badRequest('น้ำหนักไม่ถูกต้อง');
 }
 
@@ -56,10 +56,9 @@ async function refreshLast(tx: Tx, crabId: number) {
   });
 }
 
-/** ชื่อเริ่มต้นของปู = รหัสกล่อง (คอนโดหน้า-หลังเติม "หน้า/หลัง" ให้ไม่สับสน) */
-export function defaultCrabName(layout: SystemLayout, side: BoxSide, code: string) {
-  if (layout !== 'CONDO_DOUBLE') return code;
-  return `${side === 'FRONT' ? 'หน้า' : 'หลัง'} ${code}`;
+/** ชื่อเริ่มต้นของปู = รหัสกล่อง (รหัสไม่ซ้ำทั้งระบบแล้ว ด้านหลังต่อตัวอักษรจากด้านหน้า · เดิมเติม "หน้า/หลัง") */
+export function defaultCrabName(_layout: SystemLayout, _side: BoxSide, code: string) {
+  return code;
 }
 
 async function nextCrabCode(tx: Tx, ownerId: number) {
@@ -238,7 +237,7 @@ async function loadOwnedCrab(user: AuthUser, id: number) {
 function assertNotHeld(crab: { sale: { no: number; status: string } | null }, what: string) {
   if (!crab.sale) return;
   const kind = crab.sale.status === 'DONE' ? 'ขายไปแล้วในใบที่' : 'จองไว้ในใบที่';
-  throw badRequest(`ปูตัวนี้${kind} ${crab.sale.no} — ${what}ไม่ได้ เอาออกจากใบก่อน`);
+  throw badRequest(`ปูตัวนี้${kind} ${crab.sale.no} ${what}ไม่ได้ เอาออกจากใบก่อน`);
 }
 
 export async function updateCrab(user: AuthUser, id: number, input: UpdateCrabInput) {

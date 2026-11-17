@@ -115,7 +115,7 @@ async function oneRow(viewer: AuthUser, id: number, admin = false) {
 export async function createIdea(user: AuthUser, input: { title: string; body?: string | null }) {
   const since = new Date(Date.now() - 24 * 3600_000);
   const today = await prisma.idea.count({ where: { authorId: user.id, createdAt: { gte: since } } });
-  if (today >= DAILY_LIMIT) throw new AppError(429, `เสนอได้วันละ ${DAILY_LIMIT} ไอเดีย — พรุ่งนี้มาเสนอต่อได้`);
+  if (today >= DAILY_LIMIT) throw new AppError(429, `เสนอได้วันละ ${DAILY_LIMIT} ไอเดีย พรุ่งนี้มาเสนอต่อได้`);
   const idea = await prisma.idea.create({
     data: {
       authorId: user.id,
@@ -132,7 +132,7 @@ export async function createIdea(user: AuthUser, input: { title: string; body?: 
 async function ownPending(user: AuthUser, id: number) {
   const idea = await prisma.idea.findUnique({ where: { id }, select: { authorId: true, status: true } });
   if (!idea || idea.authorId !== user.id) throw notFound('ไม่พบไอเดีย');
-  if (idea.status !== 'PENDING') throw badRequest('ทีมงานรับเรื่องไปแล้ว แก้ไม่ได้ — พิมพ์บอกในไอเดียใหม่ได้');
+  if (idea.status !== 'PENDING') throw badRequest('ทีมงานรับเรื่องไปแล้ว แก้ไม่ได้ พิมพ์บอกในไอเดียใหม่ได้');
 }
 
 export async function updateIdea(user: AuthUser, id: number, input: { title?: string; body?: string | null }) {

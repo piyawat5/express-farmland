@@ -65,7 +65,7 @@ async function loadCrabs(tx: Tx, user: AuthUser, systemId: number, ids: number[]
       system: { select: { layout: true } },
     },
   });
-  if (crabs.length !== ids.length) throw badRequest('ไม่พบปูบางตัว — โหลดหน้าใหม่แล้วเลือกใหม่');
+  if (crabs.length !== ids.length) throw badRequest('ไม่พบปูบางตัว โหลดหน้าใหม่แล้วเลือกใหม่');
   if (crabs.some((c) => c.systemId !== systemId)) throw badRequest('ปูในใบเดียวกันต้องอยู่ระบบเดียวกัน');
   return crabs;
 }
@@ -88,7 +88,7 @@ async function lockCrabs(tx: Tx, ownerId: number, saleId: number, ids: number[])
     data: { saleId },
   });
   if (r.count !== ids.length) {
-    throw badRequest('ปูบางตัวถูกจอง/ขายไปแล้ว หรือไม่อยู่ในฟาร์มแล้ว — โหลดหน้าใหม่แล้วเลือกใหม่');
+    throw badRequest('ปูบางตัวถูกจอง/ขายไปแล้ว หรือไม่อยู่ในฟาร์มแล้ว โหลดหน้าใหม่แล้วเลือกใหม่');
   }
 }
 
@@ -109,7 +109,7 @@ async function markSold(tx: Tx, saleId: number, ids: number[], soldAt: Date) {
     where: { saleId, id: { in: ids }, status: 'ALIVE', deletedAt: null },
     data: { status: 'SOLD', soldAt },
   });
-  if (r.count !== ids.length) throw badRequest('ปูบางตัวในใบนี้ตายหรือถูกลบไปแล้ว — เอาออกจากใบก่อน');
+  if (r.count !== ids.length) throw badRequest('ปูบางตัวในใบนี้ตายหรือถูกลบไปแล้ว เอาออกจากใบก่อน');
 }
 
 async function nextNo(tx: Tx, ownerId: number) {

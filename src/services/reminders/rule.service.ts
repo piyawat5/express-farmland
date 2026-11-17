@@ -67,7 +67,7 @@ export type RuleInput = {
 };
 
 function checkSchedule(repeat: RepeatType, everyDays: number | null | undefined, weekdays: number[], startDate?: string | null) {
-  if (repeat === 'EVERY_DAYS' && !(everyDays && everyDays >= 1 && everyDays <= 365)) throw badRequest('ใส่จำนวนวัน 1–365');
+  if (repeat === 'EVERY_DAYS' && !(everyDays && everyDays >= 1 && everyDays <= 365)) throw badRequest('ใส่จำนวนวัน 1-365');
   if (repeat === 'WEEKDAYS' && !weekdays.length) throw badRequest('เลือกวันอย่างน้อย 1 วัน');
   if (repeat === 'ONCE' && !startDate) throw badRequest('เลือกวันที่จะให้เตือน');
 }
@@ -178,7 +178,7 @@ export async function updateRule(user: AuthUser, id: number, input: RuleInput) {
 
 export async function deleteRule(user: AuthUser, id: number) {
   const rule = assertOwned(await prisma.reminderRule.findUnique({ where: { id } }), user, 'แจ้งเตือนนี้');
-  if (rule.defaultKey) throw badRequest('เรื่องเริ่มต้นลบไม่ได้ — ปิดสวิตช์แทนได้');
+  if (rule.defaultKey) throw badRequest('เรื่องเริ่มต้นลบไม่ได้ ปิดสวิตช์แทนได้');
   await prisma.reminderRule.delete({ where: { id } }); // งานของเรื่องนี้ลบตาม (cascade)
   markDirty(user.id);
 }

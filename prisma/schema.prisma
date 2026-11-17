@@ -551,21 +551,23 @@ enum TaskCloser {
 
 /// ชนิดอาหาร + จำนวนคงเหลือ — ค่าเริ่มต้น "ปลา" / "หอย" หน่วยชิ้น (สร้างให้ตอนใช้ครั้งแรก)
 model FeedItem {
-  id        Int      @id @default(autoincrement())
-  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  ownerId   Int
-  name      String
-  emoji     String?
-  unit      String   @default("ชิ้น")
+  id          Int      @id @default(autoincrement())
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  ownerId     Int
+  name        String
+  emoji       String?
+  unit        String   @default("ชิ้น")
   /// คงเหลือ — มีความหมายเมื่อ stockSet = true
-  qty       Decimal  @default(0) @db.Decimal(10, 1)
+  qty         Decimal  @default(0) @db.Decimal(10, 1)
   /// เคยใส่จำนวนแล้ว (ซื้อ/นับใหม่) — ยังไม่เคย = ไม่ตัดสต็อก ไม่เตือนใกล้หมด (ไม่บังคับใส่สต็อก)
-  stockSet  Boolean  @default(false)
+  stockSet    Boolean  @default(false)
+  /// 1 กก. ได้ประมาณกี่ชิ้น — คนที่ซื้อเป็นกิโล (ไม่ได้นับ) ระบบแปลงเป็นชิ้นให้ · null = ยังไม่เคยซื้อเป็นกิโล (หน้าเว็บเดาจากชื่อ)
+  piecesPerKg Decimal? @db.Decimal(8, 1)
   /// false = ซ่อน (ลบ) — เก็บแถวไว้เพราะประวัติการให้อาหารอ้างถึง
-  active    Boolean  @default(true)
-  sortOrder Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   moves        FeedStockMove[]
   entries      FeedingEntry[]
@@ -585,6 +587,8 @@ model FeedStockMove {
   itemId    Int
   kind      StockMoveKind
   qty       Decimal       @db.Decimal(10, 1)
+  /// ซื้อ/นับเป็นกิโล — qty คือจำนวนชิ้นที่แปลงแล้ว (กก. × piecesPerKg ตอนนั้น) · null = ใส่เป็นชิ้น
+  kg        Decimal?      @db.Decimal(10, 2)
   /// ราคาที่จ่าย (ซื้อ) — P6 ลงบัญชีให้เอง
   priceTHB  Decimal?      @db.Decimal(12, 2)
   round     FeedingRound? @relation(fields: [roundId], references: [id], onDelete: SetNull)

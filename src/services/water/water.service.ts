@@ -166,17 +166,25 @@ export async function getSummary(user: AuthUser, systemId: number) {
 }
 
 /** ⚠ ของเมนูน้ำ (ทุกระบบรวมกัน) */
+/**
+ * ป้าย ⚠ ของน้ำ แยกตามระบบ (หน้าเว็บโชว์ ⚠ บนปุ่มเฉพาะระบบที่เลือกอยู่)
+ * ลำดับนำทาง: ตั้งเกณฑ์ → วัดครั้งแรก → (หลุดเกณฑ์) ทำตามคำแนะนำ
+ */
 export async function waterAttention(ownerId: number) {
-  const systems = await prisma.crabSystem.findMany({ where: { ownerId }, select: { id: true } });
-  let missingTargets = 0;
-  let pending = 0;
+  const systems = await prisma.crabSystem.findMany({ where: { ownerId }, select: { id: true, name: true }, orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] });
+  const missing: { systemId: number; name: string; count: number }[] = [];
+  const noTest: { systemId: number; name: string }[] = [];
+  const pending: { systemId: number; name: string; count: number }[] = [];
   for (const s of systems) {
     await ensureWaterParams(ownerId, s.id);
     const { params, tests, actions } = await loadSystem(s.id);
-    missingTargets += params.filter((p) => p.active && p.min == null && p.max == null).length;
-    pending += evaluate(params, tests, actions, new Map()).advice.filter(isPending).length;
+    const miss = params.filter((p) => p.active && p.min == null && p.max == null).length;
+    if (miss) missing.push({ systemId: s.id, name: s.name, count: miss });
+    else if (!tests.length) noTest.push({ systemId: s.id, name: s.name });
+    const pend = evaluate(params, tests, actions, new Map()).advice.filter(isPending).length;
+    if (pend) pending.push({ systemId: s.id, name: s.name, count: pend });
   }
-  return { missingTargets, pending };
+  return { missing, noTest, pending, systems: systems.length };
 }
 
 // ── ผลวัด ─────────────────────────────────────────────────────────────

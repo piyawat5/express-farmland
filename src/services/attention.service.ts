@@ -29,7 +29,14 @@ export type AttentionItem = {
   cta: string;
   /** ตัวเลขประกอบ เช่น จำนวนล็อตที่ยังไม่ใส่ราคา */
   count?: number;
+  /** เรื่องนี้เป็นของระบบไหนบ้าง — หน้าเว็บโชว์ ⚠ บนปุ่มเฉพาะตอนเลือกระบบนั้นอยู่ (เมนูยังขึ้นถ้ามีระบบไหนค้าง) */
+  systemIds?: number[];
+  /** อาหารที่เกี่ยวข้อง — หน้าเว็บวาง ⚠ ที่ปุ่ม "ซื้อ" ของอาหารนั้น */
+  itemIds?: number[];
 };
+
+/** "ระบบปู 2" เมื่อมีหลายระบบ — มีระบบเดียวไม่ต้องบอกชื่อ */
+const sysPrefix = (names: string[], total: number) => (total > 1 && names.length ? `${names.join(', ')}: ` : '');
 
 export async function getAttention(user: AuthUser): Promise<AttentionItem[]> {
   const items: AttentionItem[] = [];
@@ -58,59 +65,83 @@ export async function getAttention(user: AuthUser): Promise<AttentionItem[]> {
   }
 
   // ── น้ำ (P5) ──
+  // ลำดับนำทางในหน้าน้ำ: ตั้งเกณฑ์ (ปุ่มตั้งเกณฑ์) → วัดครั้งแรก (ปุ่มบันทึกค่าน้ำ) → หลุดเกณฑ์ (คำแนะนำ)
   if (systems > 0) {
     const w = await waterAttention(user.id);
-    if (w.missingTargets) {
+    if (w.missing.length) {
+      const n = w.missing.reduce((s, x) => s + x.count, 0);
       items.push({
         key: 'water_targets_missing',
         level: 'setup',
         menu: 'water',
         target: 'water-targets',
-        title: `ยังไม่ได้ตั้งเกณฑ์ค่าน้ำ ${w.missingTargets} ค่า`,
+        title: `${sysPrefix(w.missing.map((x) => x.name), w.systems)}ยังไม่ได้ตั้งเกณฑ์ค่าน้ำ ${n} ค่า`,
         cta: 'ตั้งเกณฑ์',
-        count: w.missingTargets,
+        count: n,
+        systemIds: w.missing.map((x) => x.systemId),
       });
     }
-    if (w.pending) {
+    if (w.noTest.length) {
+      items.push({
+        key: 'water_first_test',
+        level: 'setup',
+        menu: 'water',
+        target: 'water-record',
+        title: `${sysPrefix(w.noTest.map((x) => x.name), w.systems)}ตั้งเกณฑ์แล้ว วัดค่าน้ำครั้งแรกเลย`,
+        cta: 'บันทึกค่าน้ำ',
+        systemIds: w.noTest.map((x) => x.systemId),
+      });
+    }
+    if (w.pending.length) {
+      const n = w.pending.reduce((s, x) => s + x.count, 0);
       items.push({
         key: 'water_action',
         level: 'warn',
         menu: 'water',
         target: 'water-advice',
-        title: `ค่าน้ำหลุดเกณฑ์ ${w.pending} ค่า — ดูว่าต้องใส่อะไร`,
+        title: `${sysPrefix(w.pending.map((x) => x.name), w.systems)}ค่าน้ำหลุดเกณฑ์ ${n} ค่า ดูว่าต้องใส่อะไร`,
         cta: 'ดู',
-        count: w.pending,
+        count: n,
+        systemIds: w.pending.map((x) => x.systemId),
       });
     }
   }
 
-  // ── อาหารปู (P4) ──
+  // ── อาหารปู (P4) ── ลำดับนำทาง: ตั้งแผน (ต่อระบบ) → ใส่จำนวนอาหารที่อยู่ในแผน (ปุ่ม "ซื้อ" ของอาหารนั้น)
   if (systems > 0) {
-    const [plans, stocked, foods, fc, review] = await Promise.all([
-      prisma.feedingPlan.count({ where: { ownerId: user.id } }),
-      prisma.feedItem.count({ where: { ownerId: user.id, stockSet: true, active: true } }),
-      prisma.feedItem.findMany({ where: { ownerId: user.id, active: true }, select: { id: true, name: true } }),
+    const [allSystems, plans, foods, fc, review] = await Promise.all([
+      prisma.crabSystem.findMany({ where: { ownerId: user.id }, select: { id: true, name: true }, orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] }),
+      prisma.feedingPlan.findMany({ where: { ownerId: user.id }, select: { systemId: true, itemId: true, altItemId: true, pattern: true } }),
+      prisma.feedItem.findMany({ where: { ownerId: user.id, active: true }, select: { id: true, name: true, stockSet: true } }),
       forecast(user.id),
       prisma.feedingRound.count({ where: { ownerId: user.id, reviewPending: true } }),
     ]);
-    if (plans < systems) {
+    const planned = new Set(plans.map((p) => p.systemId));
+    const noPlan = allSystems.filter((s) => !planned.has(s.id));
+    if (noPlan.length) {
       items.push({
         key: 'feeding_plan_missing',
         level: 'setup',
         menu: 'feed',
         target: 'feed-plan',
-        title: 'ยังไม่ได้ตั้งแผนให้อาหาร',
+        title: `${sysPrefix(noPlan.map((s) => s.name), allSystems.length)}ยังไม่ได้ตั้งแผนให้อาหาร`,
         cta: 'ตั้งแผน',
+        systemIds: noPlan.map((s) => s.id),
       });
     }
-    if (!stocked) {
+    // อาหารเริ่มต้น (ปลา/หอย) มีให้แล้ว · ที่ต้องใส่จำนวนคืออาหารที่อยู่ในแผน (อย่างอื่นไม่บังคับ)
+    // ยังไม่มีแผนเลย = นับแบบเดิม (ยังไม่มีอาหารไหนใส่จำนวน) ให้รายการเริ่มต้นใช้งานยังเห็นขั้นนี้
+    const inPlan = new Set(plans.flatMap((p) => [p.itemId, p.pattern === 'ALTERNATE' ? p.altItemId : null]).filter((x): x is number => x != null));
+    const unstocked = plans.length ? foods.filter((f) => inPlan.has(f.id) && !f.stockSet) : foods.some((f) => f.stockSet) ? [] : foods;
+    if (unstocked.length) {
       items.push({
         key: 'feed_stock_missing',
         level: 'setup',
         menu: 'feed',
-        target: 'feed-stock',
-        title: 'ยังไม่ได้ใส่จำนวนอาหารที่มี',
-        cta: 'ใส่สต็อก',
+        target: 'feed-stock-set',
+        title: plans.length ? `ใส่จำนวน${unstocked.map((f) => f.name).join(', ')}ที่มี ระบบจะเตือนก่อนหมด` : 'ยังไม่ได้ใส่จำนวนอาหารที่มี',
+        cta: 'ใส่จำนวน',
+        itemIds: unstocked.map((f) => f.id),
       });
     }
     const low = foods.filter((f) => fc.get(f.id)?.low);
@@ -119,10 +150,11 @@ export async function getAttention(user: AuthUser): Promise<AttentionItem[]> {
         key: 'feed_low',
         level: 'warn',
         menu: 'feed',
-        target: 'feed-stock',
-        title: `${low.map((f) => f.name).join(', ')}ใกล้หมด — พอไม่ถึง 2 รอบ`,
+        target: 'feed-low',
+        title: `${low.map((f) => f.name).join(', ')}ใกล้หมด พอไม่ถึง 2 รอบ`,
         cta: 'ซื้อเพิ่ม',
         count: low.length,
+        itemIds: low.map((f) => f.id),
       });
     }
     if (review) {
@@ -153,7 +185,7 @@ export async function getAttention(user: AuthUser): Promise<AttentionItem[]> {
       level: 'setup',
       menu: 'crabs',
       target: 'crabs-intake',
-      title: 'ยังไม่มีปูในระบบ — รับปูล็อตแรกเข้ามาเลย',
+      title: 'ยังไม่มีปูในระบบ รับปูล็อตแรกเข้ามาเลย',
       cta: 'รับปูเข้า',
     });
   }

@@ -25,6 +25,7 @@ const ITEM_SELECT = {
   unit: true,
   qty: true,
   stockSet: true,
+  piecesPerKg: true,
   active: true,
   sortOrder: true,
 } satisfies Prisma.FeedItemSelect;
@@ -132,8 +133,21 @@ export async function forecast(ownerId: number, now = new Date()): Promise<Map<n
 const shapeItem = (it: Prisma.FeedItemGetPayload<{ select: typeof ITEM_SELECT }>, f?: Forecast) => ({
   ...it,
   qty: it.qty.toNumber(),
+  piecesPerKg: it.piecesPerKg?.toNumber() ?? null,
   forecast: f ?? null,
 });
+
+/** ใส่เป็นกิโล → จำนวนชิ้น (ปัดเป็นจำนวนเต็ม) + จำ "1 กก. กี่ชิ้น" ไว้ที่อาหารนั้น */
+export type QtyInput = { qty?: number | null; kg?: number | null; piecesPerKg?: number | null };
+function resolveQty(input: QtyInput): { qty: number; kg: number | null; perKg: number | null } {
+  if (input.kg != null) {
+    if (!(input.piecesPerKg && input.piecesPerKg > 0)) throw badRequest('บอกด้วยว่า 1 กก. ได้ประมาณกี่ชิ้น');
+    if (!(input.kg >= 0)) throw badRequest('ใส่จำนวนกิโล');
+    return { qty: Math.round(input.kg * input.piecesPerKg), kg: input.kg, perKg: input.piecesPerKg };
+  }
+  if (input.qty == null) throw badRequest('ใส่จำนวน');
+  return { qty: input.qty, kg: null, perKg: null };
+}
 
 export async function listItems(user: AuthUser, opts: { includeHidden?: boolean } = {}) {
   await ensureFeedItems(user.id);
@@ -168,7 +182,7 @@ export async function createItem(user: AuthUser, input: { name: string; emoji?: 
   return it.id;
 }
 
-export async function updateItem(user: AuthUser, id: number, input: { name?: string; emoji?: string | null; unit?: string; active?: boolean }) {
+export async function updateItem(user: AuthUser, id: number, input: { name?: string; emoji?: string | null; unit?: string; active?: boolean; piecesPerKg?: number | null }) {
   await ownedItem(user, id);
   if (input.active === false) {
     const inPlan = await prisma.feedingPlan.count({ where: { ownerId: user.id, OR: [{ itemId: id }, { altItemId: id }] } });
@@ -177,7 +191,7 @@ export async function updateItem(user: AuthUser, id: number, input: { name?: str
   try {
     await prisma.feedItem.update({
       where: { id },
-      data: { name: input.name?.trim() || undefined, emoji: input.emoji, unit: input.unit?.trim() || undefined, active: input.active },
+      data: { name: input.name?.trim() || undefined, emoji: input.emoji, unit: input.unit?.trim() || undefined, active: input.active, piecesPerKg: input.piecesPerKg },
     });
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw badRequest('มีอาหารชื่อนี้แล้ว');
@@ -185,31 +199,39 @@ export async function updateItem(user: AuthUser, id: number, input: { name?: str
   }
 }
 
-/** + ซื้ออาหาร (ราคาไม่ใส่ก็ได้) */
-export async function buy(user: AuthUser, id: number, input: { qty: number; priceTHB?: number | null; note?: string | null }) {
+/** + ซื้ออาหาร (ราคาไม่ใส่ก็ได้) · ซื้อเป็นกิโลได้ (kg × piecesPerKg = ชิ้น) */
+export async function buy(user: AuthUser, id: number, input: QtyInput & { priceTHB?: number | null; note?: string | null }) {
   const it = await ownedItem(user, id);
-  if (!(input.qty > 0)) throw badRequest('ใส่จำนวนที่ซื้อ');
+  const { qty, kg, perKg } = resolveQty(input);
+  if (!(qty > 0)) throw badRequest('ใส่จำนวนที่ซื้อ');
   // ยังไม่เคยใส่สต็อก = เริ่มนับจากที่ซื้อครั้งนี้ (ยอดเดิมไม่มีความหมาย)
   const base = it.stockSet ? undefined : 0;
   await prisma.$transaction([
     prisma.feedStockMove.create({
-      data: { ownerId: user.id, itemId: id, kind: 'BUY', qty: input.qty, priceTHB: input.priceTHB ?? null, note: input.note ?? null },
+      data: { ownerId: user.id, itemId: id, kind: 'BUY', qty, kg, priceTHB: input.priceTHB ?? null, note: input.note ?? null },
     }),
     prisma.feedItem.update({
       where: { id },
-      data: base === 0 ? { qty: input.qty, stockSet: true } : { qty: { increment: input.qty }, stockSet: true },
+      data: {
+        ...(base === 0 ? { qty } : { qty: { increment: qty } }),
+        stockSet: true,
+        ...(perKg ? { piecesPerKg: perKg } : {}),
+      },
     }),
   ]);
 }
 
-/** นับสต็อกใหม่ (มีอยู่จริงเท่านี้) — เก็บส่วนต่างเป็นประวัติ */
-export async function recount(user: AuthUser, id: number, qty: number) {
+/** นับสต็อกใหม่ (มีอยู่จริงเท่านี้ · ชั่งเป็นกิโลได้) — เก็บส่วนต่างเป็นประวัติ */
+export async function recount(user: AuthUser, id: number, input: QtyInput) {
   const it = await ownedItem(user, id);
+  const { qty, kg, perKg } = resolveQty(input);
   if (!(qty >= 0)) throw badRequest('จำนวนต้องไม่ติดลบ');
   const diff = it.stockSet ? qty - it.qty.toNumber() : qty;
   await prisma.$transaction([
-    prisma.feedStockMove.create({ data: { ownerId: user.id, itemId: id, kind: 'ADJUST', qty: diff, note: `นับใหม่ = ${qty}` } }),
-    prisma.feedItem.update({ where: { id }, data: { qty, stockSet: true } }),
+    prisma.feedStockMove.create({
+      data: { ownerId: user.id, itemId: id, kind: 'ADJUST', qty: diff, kg, note: kg != null ? `นับใหม่ ≈ ${kg} กก. = ${qty}` : `นับใหม่ = ${qty}` },
+    }),
+    prisma.feedItem.update({ where: { id }, data: { qty, stockSet: true, ...(perKg ? { piecesPerKg: perKg } : {}) } }),
   ]);
 }
 
@@ -219,12 +241,13 @@ export async function listMoves(user: AuthUser, id: number) {
     where: { itemId: id },
     orderBy: [{ at: 'desc' }, { id: 'desc' }],
     take: 40,
-    select: { id: true, kind: true, qty: true, priceTHB: true, note: true, at: true, round: { select: { feedDate: true, system: { select: { name: true } } } } },
+    select: { id: true, kind: true, qty: true, kg: true, priceTHB: true, note: true, at: true, round: { select: { feedDate: true, system: { select: { name: true } } } } },
   });
   return rows.map((m) => ({
     id: m.id,
     kind: m.kind,
     qty: m.qty.toNumber(),
+    kg: m.kg?.toNumber() ?? null,
     priceTHB: m.priceTHB?.toNumber() ?? null,
     note: m.note,
     at: m.at,

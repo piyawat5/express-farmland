@@ -148,7 +148,7 @@ export async function listLedger(user: AuthUser, from: Date, to: Date): Promise<
     }),
     prisma.feedStockMove.findMany({
       where: { ownerId: user.id, kind: 'BUY', priceTHB: { not: null }, at: range },
-      select: { id: true, at: true, qty: true, priceTHB: true, note: true, item: { select: { name: true, unit: true } } },
+      select: { id: true, at: true, qty: true, kg: true, priceTHB: true, note: true, item: { select: { name: true, unit: true } } },
     }),
     prisma.sale.findMany({
       where: { ownerId: user.id, status: 'DONE', soldAt: range },
@@ -185,7 +185,7 @@ export async function listLedger(user: AuthUser, from: Date, to: Date): Promise<
       group: 'DIRECT',
       amount: b.priceTHB!.toNumber(),
       at: b.at,
-      title: `ซื้อ${b.item.name} ${fmtQty(b.qty.toNumber())} ${b.item.unit}`,
+      title: b.kg != null ? `ซื้อ${b.item.name} ${fmtQty(b.kg.toNumber())} กก.` : `ซื้อ${b.item.name} ${fmtQty(b.qty.toNumber())} ${b.item.unit}`,
       detail: b.note,
       refId: b.id,
       systemName: null,

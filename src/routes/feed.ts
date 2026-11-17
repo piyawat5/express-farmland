@@ -48,6 +48,7 @@ feedRouter.patch(
       emoji: z.string().max(16).nullable().optional(),
       unit: z.string().trim().max(16).optional(),
       active: z.boolean().optional(),
+      piecesPerKg: z.number().positive().max(10000).nullable().optional(),
     }),
   }),
   asyncHandler(async (req, res) => {
@@ -60,7 +61,16 @@ feedRouter.post(
   '/items/:id/buy',
   validate({
     params: idParam,
-    body: z.object({ qty: z.number().positive().max(100000), priceTHB: z.number().min(0).max(10_000_000).nullable().optional(), note: z.string().max(200).nullable().optional() }),
+    // ใส่เป็นชิ้น (qty) หรือเป็นกิโล (kg + piecesPerKg → ระบบแปลงเป็นชิ้นให้)
+    body: z
+      .object({
+        qty: z.number().positive().max(100000).optional(),
+        kg: z.number().positive().max(10000).optional(),
+        piecesPerKg: z.number().positive().max(10000).optional(),
+        priceTHB: z.number().min(0).max(10_000_000).nullable().optional(),
+        note: z.string().max(200).nullable().optional(),
+      })
+      .refine((b) => b.qty != null || b.kg != null, 'ใส่จำนวนที่ซื้อ'),
   }),
   asyncHandler(async (req, res) => {
     await stock.buy(req.user!, Number(req.params.id), req.body);
@@ -70,9 +80,14 @@ feedRouter.post(
 
 feedRouter.post(
   '/items/:id/count',
-  validate({ params: idParam, body: z.object({ qty: z.number().min(0).max(100000) }) }),
+  validate({
+    params: idParam,
+    body: z
+      .object({ qty: z.number().min(0).max(100000).optional(), kg: z.number().min(0).max(10000).optional(), piecesPerKg: z.number().positive().max(10000).optional() })
+      .refine((b) => b.qty != null || b.kg != null, 'ใส่จำนวนที่มีอยู่จริง'),
+  }),
   asyncHandler(async (req, res) => {
-    await stock.recount(req.user!, Number(req.params.id), req.body.qty);
+    await stock.recount(req.user!, Number(req.params.id), req.body);
     res.status(204).end();
   }),
 );

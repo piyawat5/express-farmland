@@ -59,7 +59,7 @@ export const escapeHtml = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 /** กรอบอีเมล v2 (สีหลัก teal เหมือนหน้าเว็บ) — innerHtml ต้อง escape ข้อความผู้ใช้มาแล้ว */
-export function renderEmailHtml(innerHtml: string, heading: string): string {
+export function renderEmailHtml(innerHtml: string, heading: string, footer = 'ส่งอัตโนมัติจากระบบจัดการปู · ตั้งเวลาส่ง/ปิดอีเมลได้ที่เมนูบัญชี &amp; การแจ้งเตือน'): string {
   return `
   <div style="font-family: Kanit, Tahoma, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; padding: 16px; background-color: #f0fdfa;">
     <div style="background-color: #ffffff; padding: 24px; border-radius: 14px; border: 1px solid #ccfbf1;">
@@ -69,19 +69,19 @@ export function renderEmailHtml(innerHtml: string, heading: string): string {
       </div>
       ${innerHtml}
       <div style="margin-top: 24px; padding-top: 14px; border-top: 1px solid #eee; text-align: center; color: #94a3b8; font-size: 12px;">
-        ส่งอัตโนมัติจากระบบจัดการปู · ตั้งเวลาส่ง/ปิดอีเมลได้ที่เมนูบัญชี &amp; การแจ้งเตือน
+        ${footer}
       </div>
     </div>
   </div>`;
 }
 
 /** ส่งอีเมล HTML ที่ประกอบเองแล้ว (สรุปงานค้าง) */
-export async function sendHtmlEmail(input: { to: string; subject: string; heading: string; html: string }) {
+export async function sendHtmlEmail(input: { to: string; subject: string; heading: string; html: string; footer?: string }) {
   return transporter.sendMail({
     from: env.MAIL_FROM ?? env.EMAIL_USER,
     to: input.to,
     subject: input.subject,
-    html: renderEmailHtml(input.html, input.heading),
+    html: renderEmailHtml(input.html, input.heading, input.footer ? escapeHtml(input.footer) : undefined),
   });
 }
 

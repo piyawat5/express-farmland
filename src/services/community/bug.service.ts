@@ -96,7 +96,7 @@ export async function createBug(
 ) {
   const since = new Date(Date.now() - 24 * 3600_000);
   const today = await prisma.bugReport.count({ where: { userId: user.id, createdAt: { gte: since } } });
-  if (today >= DAILY_LIMIT) throw new AppError(429, `แจ้งได้วันละ ${DAILY_LIMIT} เรื่อง — ตอบเพิ่มในเรื่องเดิมได้`);
+  if (today >= DAILY_LIMIT) throw new AppError(429, `แจ้งได้วันละ ${DAILY_LIMIT} เรื่อง ตอบเพิ่มในเรื่องเดิมได้`);
   const b = await prisma.bugReport.create({
     data: {
       userId: user.id,

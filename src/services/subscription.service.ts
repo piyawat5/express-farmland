@@ -1,7 +1,8 @@
 import { Prisma, type Role, type SubscriptionSource } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { AppError, badRequest, notFound } from '../lib/http';
-import { sendNotificationEmail } from '../lib/mailer';
+import { env } from '../config/env';
+import { escapeHtml, sendHtmlEmail, sendNotificationEmail } from '../lib/mailer';
 import { getShopSettings } from './settings.service';
 
 // ════════════════════════════════════════════════════════════════════
@@ -158,7 +159,7 @@ export async function updatePlan(id: number, input: Partial<PlanInput>) {
 export async function deletePlan(id: number) {
   const used = await prisma.subscription.count({ where: { planId: id } });
   const slips = await prisma.paymentSlip.count({ where: { planId: id } });
-  if (used || slips) throw badRequest('แพ็กเกจนี้มีลูกค้าใช้แล้ว ลบไม่ได้ — ปิดการขายแทนได้');
+  if (used || slips) throw badRequest('แพ็กเกจนี้มีลูกค้าใช้แล้ว ลบไม่ได้ ปิดการขายแทนได้');
   await prisma.plan.delete({ where: { id } });
 }
 
@@ -170,22 +171,68 @@ export async function createSlip(
 ) {
   const plan = await prisma.plan.findUnique({ where: { id: input.planId } });
   if (!plan || !plan.active) throw badRequest('ไม่พบแพ็กเกจนี้ หรือปิดการขายไปแล้ว');
-  const pending = await prisma.paymentSlip.count({ where: { userId, status: 'PENDING' } });
-  if (pending >= MAX_PENDING_SLIPS) throw badRequest('มีสลิปรอตรวจอยู่แล้ว กรุณารอแอดมินตรวจก่อน');
-
-  const slip = await prisma.paymentSlip.create({
-    data: {
-      userId,
-      planId: plan.id,
-      amount: input.amount ?? plan.priceTHB,
-      imageUrl: input.imageUrl,
-      imagePublicId: input.imagePublicId ?? null,
-      note: input.note ?? null,
-    },
-    include: { plan: true },
+  const slip = await prisma.$transaction(async (tx) => {
+    // ล็อกแถวผู้ใช้ → ส่ง 2 ใบพร้อมกันเข้าคิว ใบที่ 2 เจอเงื่อนไขด้านล่าง
+    await tx.$queryRaw`SELECT \`id\` FROM \`User\` WHERE \`id\` = ${userId} FOR UPDATE`;
+    const pending = await tx.paymentSlip.count({ where: { userId, status: 'PENDING' } });
+    if (pending >= MAX_PENDING_SLIPS) throw badRequest('มีสลิปรอตรวจอยู่แล้ว กรุณารอแอดมินตรวจก่อน');
+    // กดส่งซ้ำ (เจอจริง: 2 ใบห่างกัน 1 วิ) → ใบที่ 2 ภายใน 1 นาทีไม่รับ
+    const recent = await tx.paymentSlip.count({ where: { userId, status: 'PENDING', createdAt: { gte: new Date(Date.now() - 60_000) } } });
+    if (recent) throw badRequest('ส่งสลิปไปแล้ว รอแอดมินตรวจสักครู่');
+    return tx.paymentSlip.create({
+      data: {
+        userId,
+        planId: plan.id,
+        amount: input.amount ?? plan.priceTHB,
+        imageUrl: input.imageUrl,
+        imagePublicId: input.imagePublicId ?? null,
+        note: input.note ?? null,
+      },
+      include: { plan: true },
+    });
   });
   invalidateAccess(userId);
+  void notifyAdminsNewSlip(slip.id).catch((err) => console.error('แจ้งแอดมินสลิปใหม่ไม่สำเร็จ:', err));
   return slip;
+}
+
+/** ลูกค้าส่งสลิปใหม่ → อีเมลหาแอดมินทุกคน (notifyEmail ก่อน ไม่มีใช้อีเมลล็อกอิน) · ส่งไม่ได้ก็ไม่กระทบการส่งสลิป */
+async function notifyAdminsNewSlip(slipId: number) {
+  const [slip, admins] = await Promise.all([
+    prisma.paymentSlip.findUnique({
+      where: { id: slipId },
+      select: { amount: true, note: true, imageUrl: true, createdAt: true, plan: { select: { name: true, priceTHB: true } }, user: { select: { name: true, email: true } } },
+    }),
+    prisma.user.findMany({ where: { role: 'ADMIN', active: true }, select: { email: true, notifyEmail: true } }),
+  ]);
+  if (!slip) return;
+  const to = [...new Set(admins.map(contactEmail).filter((e): e is string => !!e))];
+  if (!to.length) return;
+  const amount = slip.amount.toNumber().toLocaleString('th-TH');
+  const who = slip.user.name ? `${slip.user.name} (${slip.user.email})` : slip.user.email;
+  const mismatch = slip.amount.toNumber() !== slip.plan.priceTHB.toNumber();
+  const link = `${env.FRONTEND_URL.replace(/\/$/, '')}/admin/slips`;
+  const row = (k: string, v: string) =>
+    `<tr><td style="padding:6px 10px;color:#64748b;white-space:nowrap;">${k}</td><td style="padding:6px 10px;color:#0f172a;font-weight:600;">${v}</td></tr>`;
+  const html = `
+    <p style="font-size:16px;color:#334155;margin:0 0 12px;">มีลูกค้าส่งสลิปเข้ามา รอคุณตรวจ</p>
+    <table style="border-collapse:collapse;font-size:15px;margin-bottom:14px;">
+      ${row('ลูกค้า', escapeHtml(who))}
+      ${row('แพ็กเกจ', escapeHtml(slip.plan.name))}
+      ${row('ยอด', `฿${amount}${mismatch ? ' <span style="color:#d97706;">(ไม่ตรงราคาแพ็กเกจ)</span>' : ''}`)}
+      ${slip.note ? row('ข้อความ', escapeHtml(slip.note)) : ''}
+    </table>
+    <p style="margin:0 0 16px;"><img src="${escapeHtml(slip.imageUrl)}" alt="สลิป" style="max-width:100%;max-height:420px;border-radius:10px;border:1px solid #e2e8f0;" /></p>
+    <p style="text-align:center;margin:0;">
+      <a href="${escapeHtml(link)}" style="display:inline-block;padding:12px 22px;border-radius:10px;background:#0d9488;color:#ffffff;text-decoration:none;font-weight:600;">เปิดหน้าตรวจสลิป</a>
+    </p>`;
+  await sendHtmlEmail({
+    to: to.join(', '),
+    subject: `💰 สลิปใหม่ ฿${amount} · ${slip.user.name ?? slip.user.email}`,
+    heading: 'สลิปใหม่รอตรวจ',
+    html,
+    footer: 'ส่งถึงแอดมินทุกครั้งที่ลูกค้าส่งสลิป',
+  });
 }
 
 export function listMySlips(userId: number) {

@@ -43,7 +43,7 @@ export type EggEstimate = {
 let client: Anthropic | null = null;
 export const eggAiConfigured = () => !!env.ANTHROPIC_API_KEY;
 function getClient(): Anthropic {
-  if (!env.ANTHROPIC_API_KEY) throw new AppError(503, 'ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY — ใช้ AI ประเมินไข่ไม่ได้');
+  if (!env.ANTHROPIC_API_KEY) throw new AppError(503, 'ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY ใช้ AI ประเมินไข่ไม่ได้');
   // อ่านรูป ~20 รูปใช้เวลาหลายวินาที → timeout กว้างหน่อย, retry ครั้งเดียวพอ (ผู้ใช้รออยู่)
   client ??= new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, timeout: 90_000, maxRetries: 1 });
   return client;
@@ -125,7 +125,7 @@ const SYSTEM_PROMPT = `You estimate egg (ovary) fullness of female mud crabs fro
 
 How the photos are taken: the farmer shines a bright light through the crab's carapace in a dim place (a lamp under a net, or a flashlight), so the shell glows. Inside, the developing ovary shows up as an opaque, often granular orange-to-dark-red mass, while parts without ovary let more light through. As the crab fills, the mass spreads outward from the middle until it reaches the edges of the carapace under the lateral spines. Lighting, background, angle and exposure vary a lot between photos, so judge how much of the carapace interior the ovary covers, not how bright or dark the picture is overall.
 
-"Egg %" is the farmer's own estimate on a 0–100 scale, where 100 means the ovary fills the carapace right to its edges. When the farmer's labeled reference photos are provided, they define what each number means on this farm, so match their scale rather than any outside convention. Their numbers are hand estimates and are not perfectly consistent, so calibrate against the set as a whole instead of copying the single most similar photo. When there are few or no reference photos, use the description above and lower your confidence accordingly. When an earlier photo of the same crab is provided, use it to judge growth since then; ovaries usually grow over time, but the earlier number may itself be off.
+"Egg %" is the farmer's own estimate on a 0-100 scale, where 100 means the ovary fills the carapace right to its edges. When the farmer's labeled reference photos are provided, they define what each number means on this farm, so match their scale rather than any outside convention. Their numbers are hand estimates and are not perfectly consistent, so calibrate against the set as a whole instead of copying the single most similar photo. When there are few or no reference photos, use the description above and lower your confidence accordingly. When an earlier photo of the same crab is provided, use it to judge growth since then; ovaries usually grow over time, but the earlier number may itself be off.
 
 If the new photo is not a candling shot (ordinary daylight with the shell not lit through), the carapace is mostly out of frame, or it is too blurred or dark to judge, set usable to false. A wrong number is worse than no number here, because the farmer saves it straight into their records.
 
@@ -208,15 +208,15 @@ async function estimate(ownerId: number, imageUrl: string, crabId?: number): Pro
     throw toAppError(e);
   }
 
-  if (res.stop_reason === 'refusal') throw new AppError(502, 'AI ไม่ประเมินรูปนี้ — กรอก % เองได้เลย');
-  if (res.stop_reason === 'max_tokens') throw new AppError(502, 'AI ตอบไม่จบ — ลองอีกครั้ง หรือกรอก % เอง');
+  if (res.stop_reason === 'refusal') throw new AppError(502, 'AI ไม่ประเมินรูปนี้ กรอก % เองได้เลย');
+  if (res.stop_reason === 'max_tokens') throw new AppError(502, 'AI ตอบไม่จบ ลองอีกครั้ง หรือกรอก % เอง');
   const text = res.content.find((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text');
-  if (!text) throw new AppError(502, 'AI ไม่ได้ส่งผลกลับมา — ลองอีกครั้ง');
+  if (!text) throw new AppError(502, 'AI ไม่ได้ส่งผลกลับมา ลองอีกครั้ง');
   let out: z.infer<typeof outputZ>;
   try {
     out = outputZ.parse(JSON.parse(text.text));
   } catch {
-    throw new AppError(502, 'อ่านผลจาก AI ไม่ได้ — ลองอีกครั้ง');
+    throw new AppError(502, 'อ่านผลจาก AI ไม่ได้ ลองอีกครั้ง');
   }
 
   return {
@@ -234,15 +234,15 @@ async function estimate(ownerId: number, imageUrl: string, crabId?: number): Pro
 function toAppError(e: unknown): AppError {
   // ⚠️ ห้ามตอบ 503 — หน้าเว็บถือว่า 503 = "ยังไม่เปิดฟีเจอร์" แล้วซ่อนเงียบ ผู้ใช้จะไม่รู้ว่า key ผิด
   if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) {
-    return new AppError(502, 'ANTHROPIC_API_KEY ใช้ไม่ได้ — ตรวจ key ในไฟล์ .env');
+    return new AppError(502, 'ANTHROPIC_API_KEY ใช้ไม่ได้ ตรวจ key ในไฟล์ .env');
   }
-  if (e instanceof Anthropic.RateLimitError) return new AppError(429, 'AI ถูกเรียกถี่เกินไป — รอสักครู่แล้วลองใหม่');
-  if (e instanceof Anthropic.BadRequestError) return new AppError(502, `AI เปิดรูปนี้ไม่ได้ — ${e.message}`);
-  if (e instanceof Anthropic.APIConnectionTimeoutError) return new AppError(504, 'AI ใช้เวลานานเกินไป — ลองอีกครั้ง หรือกรอก % เอง');
+  if (e instanceof Anthropic.RateLimitError) return new AppError(429, 'AI ถูกเรียกถี่เกินไป รอสักครู่แล้วลองใหม่');
+  if (e instanceof Anthropic.BadRequestError) return new AppError(502, `AI เปิดรูปนี้ไม่ได้ ${e.message}`);
+  if (e instanceof Anthropic.APIConnectionTimeoutError) return new AppError(504, 'AI ใช้เวลานานเกินไป ลองอีกครั้ง หรือกรอก % เอง');
   if (e instanceof Anthropic.APIError) {
-    return new AppError(502, `AI มีปัญหาชั่วคราว (${e.status ?? 'network'}) — ลองอีกครั้ง หรือกรอก % เอง`);
+    return new AppError(502, `AI มีปัญหาชั่วคราว (${e.status ?? 'network'}) ลองอีกครั้ง หรือกรอก % เอง`);
   }
-  return e instanceof AppError ? e : new AppError(502, 'AI มีปัญหาชั่วคราว — ลองอีกครั้ง');
+  return e instanceof AppError ? e : new AppError(502, 'AI มีปัญหาชั่วคราว ลองอีกครั้ง');
 }
 
 // กันเผลอยิงรัว (บั๊กหน้าเว็บวนลูป = เสียเงินจริง) — ต่อคนไม่เกิน 60 ครั้ง / 10 นาที
@@ -252,14 +252,14 @@ const recentCalls = new Map<number, number[]>();
 function assertRate(userId: number): void {
   const now = Date.now();
   const calls = (recentCalls.get(userId) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
-  if (calls.length >= RATE_MAX) throw new AppError(429, 'ใช้ AI ประเมินไข่ถี่เกินไป — พักสักครู่แล้วลองใหม่');
+  if (calls.length >= RATE_MAX) throw new AppError(429, 'ใช้ AI ประเมินไข่ถี่เกินไป พักสักครู่แล้วลองใหม่');
   calls.push(now);
   recentCalls.set(userId, calls);
 }
 
 /** route เรียกตัวนี้ — ปูที่มีอยู่แล้วต้องเป็นปูไข่ของผู้ใช้เอง · ปูใหม่ (กำลังรับเข้า) ไม่ต้องส่ง crabId */
 export async function estimateEggForUser(user: AuthUser, input: { imageUrl: string; crabId?: number }): Promise<EggEstimate> {
-  if (!eggAiConfigured()) throw new AppError(503, 'ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY — ใช้ AI ประเมินไข่ไม่ได้');
+  if (!eggAiConfigured()) throw new AppError(503, 'ยังไม่ได้ตั้งค่า ANTHROPIC_API_KEY ใช้ AI ประเมินไข่ไม่ได้');
   assertOwnImage(input.imageUrl);
   if (input.crabId != null) {
     const crab = assertOwned(

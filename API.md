@@ -52,7 +52,7 @@ redirect URI ที่ต้องลงทะเบียนในแต่ล�
 | GET | `/billing/shop` | `{ shopName, promptPayId, promptPayName, phone, facebookName, facebookUrl, lineOaUrl, graceDays }` |
 | GET | `/billing/plans` | แพ็กเกจที่เปิดขาย `[{ id, code, name, description, priceTHB, durationDays(null=ซื้อขาด) }]` |
 | GET | `/billing/me` | `{ access, slips[], subscriptions[] }` |
-| POST | `/billing/slips` | `{ planId, imageUrl, imagePublicId?, amount?, note? }` → 201 · มีสลิปรอตรวจได้ไม่เกิน 3 ใบ |
+| POST | `/billing/slips` | `{ planId, imageUrl, imagePublicId?, amount?, note? }` → 201 · มีสลิปรอตรวจได้ไม่เกิน 3 ใบ · ส่งซ้ำภายใน 1 นาที = 400 (ล็อกแถวผู้ใช้ 2 คำขอพร้อมกันได้ใบเดียว) · ส่งแล้วอีเมลหาแอดมินทุกคน (`notifyEmail` ก่อน ไม่มีใช้อีเมลล็อกอิน) พร้อมรูปสลิป + ลิงก์หน้าตรวจ |
 | POST | `/uploads/image?kind=slip\|crab\|bug` | multipart field `image` (≤8MB) → `{ url, publicId }` · ไม่ได้ตั้ง Cloudinary = 503 |
 | GET | `/bugs` | (P8) เรื่องที่ฉันแจ้ง ล่าสุดก่อน `[{ id, excerpt, photo, pageTitle, status, userUnread, adminUnread, comments, lastActivityAt, createdAt }]` |
 | POST | `/bugs` | `{ body, photos?: [{url, publicId?}](≤3, ต้องเป็นรูปจาก /uploads), page?, pageTitle?, device?: { ua, screen, theme, app, lang } }` → `BugDetail` 201 · วันละ ≤10 เรื่อง (429) |
@@ -67,7 +67,7 @@ redirect URI ที่ต้องลงทะเบียนในแต่ล�
 ## มีสิทธิ์ใช้งาน
 | Method | Path | หมายเหตุ |
 |---|---|---|
-| GET | `/attention` | `{ items: [{ key, level 'setup'\|'warn'\|'urgent', menu, target, title, cta }] }` — ป้าย ⚠ นำทาง · `target` = ค่า `data-attention` ของปุ่มเป้าหมาย |
+| GET | `/attention` | `{ items: [{ key, level 'setup'\|'warn'\|'urgent', menu, target, title, cta, count?, systemIds?, itemIds? }] }` — ป้าย ⚠ นำทาง · `target` = ค่า `data-attention` ของปุ่มเป้าหมาย · `systemIds` = เรื่องของระบบไหน (หน้าเว็บขึ้น ⚠ บนปุ่มเฉพาะตอนเลือกระบบนั้น · เมนูขึ้นถ้ามีระบบไหนค้าง · มีหลายระบบ `title` ขึ้นต้นด้วยชื่อระบบ) · `itemIds` = อาหารที่เกี่ยวข้อง (⚠ ที่ปุ่ม "ซื้อ" ของอาหารนั้น) |
 
 key ที่มีตอนนี้: `bug_reply` (P8 · `community`, `community-bugs`, มี `count` · ทีมงานตอบ/เปลี่ยนสถานะเรื่องที่แจ้งแล้วยังไม่ได้เปิดอ่าน) · `system_missing` (menu `crabs`, target `crabs-add-system`) · `first_lot_missing` (`crabs`, `crabs-intake`) · `lot_cost_missing` (`crabs`, `crabs-lots`, มี `count`) · `notify_email_missing` (`profile`, `profile-notify-email`) · `tasks_due` (`reminders`, `reminders-today`, มี `count` = งานที่ถึงเวลาแล้ว · `level: 'urgent'` เมื่อมีงานด่วนมาก)
 
@@ -102,8 +102,8 @@ key ที่มีตอนนี้: `bug_reply` (P8 · `community`, `communit
 | Method | Path | หมายเหตุ |
 |---|---|---|
 | GET | `/systems` | `[{ id, name, layout, rows, cols, sortOrder, aliveCrabs }]` |
-| POST | `/systems` | `{ name, layout 'BASKET'\|'CONDO_SINGLE'\|'CONDO_DOUBLE', rows(1–30), cols(1–60) }` → สร้างกล่องให้ครบ (หน้า-หลัง = 2 ด้าน) รหัส `A1` (A = ชั้นบนสุด) |
-| PATCH | `/systems/:id` | `{ name?, rows?, cols? }` · ย่อผังได้เฉพาะเมื่อกล่องที่หายไม่มีปู (400 บอกรหัสกล่อง) |
+| POST | `/systems` | `{ name, layout 'BASKET'\|'CONDO_SINGLE'\|'CONDO_DOUBLE', rows(1–30), cols(1–60) }` → สร้างกล่องให้ครบ (หน้า-หลัง = 2 ด้าน) รหัส `A1` (A = ชั้นบนสุด) · **หน้า-หลัง: ด้านหลังต่อตัวอักษรจากด้านหน้า** (4 ชั้น: หน้า A-D หลัง E-H) รหัสไม่ซ้ำทั้งระบบ · ชื่อซ้ำกับระบบอื่นของตัวเอง = 400 (ล็อกแถวผู้ใช้ กดสร้างพร้อมกันได้ระบบเดียว) |
+| PATCH | `/systems/:id` | `{ name?, rows?, cols? }` · ย่อผังได้เฉพาะเมื่อกล่องที่หายไม่มีปู (400 บอกรหัสกล่อง) · หน้า-หลังเปลี่ยนจำนวนชั้น = รหัสด้านหลังเลื่อนตาม (ปูที่ชื่อยังเป็นรหัสเดิมเปลี่ยนชื่อตาม) · ชื่อซ้ำ = 400 |
 | DELETE | `/systems/:id` | ได้เฉพาะระบบที่ไม่เคยมีปู |
 | GET | `/systems/:id/grid` | `{ system, checkEveryDays(รอบเช็คปูจากแจ้งเตือน · null = ปิดเรื่องนี้ ไม่ขึ้น ⚠), boxes:[{id,side,row,col,code}], crabs:[{id,boxId,name,type,sex,grade,cableTieColor,lastWeightG,lastPct,lastPhotoUrl,lastCheckedAt, lot:{id,receivedAt,costMissing}, sale:{id,no,customer} \| null(P6 ใบจองที่ถือปูตัวนี้ → ป้าย 🔖)}] }` — ปูที่ยังเลี้ยงอยู่เท่านั้น |
 
@@ -182,12 +182,12 @@ Rule = { id, systemId, kind, defaultKey, locked, title, icon, priority, repeat(+
 
 | Method | Path | หมายเหตุ |
 |---|---|---|
-| GET | `/feed/items` | `[{ id, name, emoji, unit, qty, stockSet, active, sortOrder, forecast: { used, rounds(พออีกกี่รอบ), runsOutOn('YYYY-MM-DD' \| null = พอเกิน 30 วัน), perRound, low(< 2 รอบ) } }]` |
+| GET | `/feed/items` | `[{ id, name, emoji, unit, qty, stockSet, piecesPerKg(1 กก. กี่ชิ้น · null = ยังไม่เคยซื้อเป็นกิโล), active, sortOrder, forecast: { used, rounds(พออีกกี่รอบ), runsOutOn('YYYY-MM-DD' \| null = พอเกิน 30 วัน), perRound, low(< 2 รอบ) } }]` |
 | POST | `/feed/items` | `{ name, emoji?, unit?('ชิ้น') }` → `{ id }` · ชื่อซ้ำ = 400 (ที่เคยลบ = เอากลับมา) |
-| PATCH | `/feed/items/:id` | `{ name?, emoji?, unit?, active? }` · ลบ (`active:false`) อาหารที่อยู่ในแผน = 400 |
-| POST | `/feed/items/:id/buy` | `{ qty>0, priceTHB?, note? }` → 204 · ครั้งแรก = เริ่มนับสต็อกจากตรงนี้ |
-| POST | `/feed/items/:id/count` | `{ qty≥0 }` นับใหม่ (มีจริงเท่านี้) → 204 · เก็บส่วนต่างเป็น ADJUST |
-| GET | `/feed/items/:id/moves` | 40 รายการล่าสุด `[{ kind 'BUY'\|'USE'\|'ADJUST', qty(±), priceTHB, note, at, round: { feedDate, systemName } \| null }]` |
+| PATCH | `/feed/items/:id` | `{ name?, emoji?, unit?, active?, piecesPerKg? }` · ลบ (`active:false`) อาหารที่อยู่ในแผน = 400 |
+| POST | `/feed/items/:id/buy` | `{ qty>0 }` หรือ **`{ kg>0, piecesPerKg>0 }`** (ซื้อเป็นกิโล → ชิ้น = round(kg × piecesPerKg) + จำ piecesPerKg ไว้ที่อาหาร) `+ priceTHB?, note?` → 204 · ไม่ส่งจำนวน/กิโลไม่บอกชิ้นต่อกิโล = 400 · ครั้งแรก = เริ่มนับสต็อกจากตรงนี้ |
+| POST | `/feed/items/:id/count` | `{ qty≥0 }` หรือ `{ kg≥0, piecesPerKg }` นับใหม่ (มีจริงเท่านี้) → 204 · เก็บส่วนต่างเป็น ADJUST |
+| GET | `/feed/items/:id/moves` | 40 รายการล่าสุด `[{ kind 'BUY'\|'USE'\|'ADJUST', qty(±), kg(ซื้อ/นับเป็นกิโล \| null), priceTHB, note, at, round: { feedDate, systemName } \| null }]` · บัญชีลงชื่อ "ซื้อหอย 2 กก." เมื่อซื้อเป็นกิโล |
 | GET | `/feed/analysis?days(30–730 · ค่าเริ่มต้น 180)` | **วิเคราะห์อาหาร (P7)** ทั้งฟาร์ม → `FeedAnalysis` (ดูด้านล่าง) |
 | GET | `/feed/plan?systemId` | `{ plan \| null, crabs, preview: 14 วัน [{ date, feed, skip, itemId, override, dueAt, need }] }` |
 | PUT | `/feed/plan` | `{ systemId, onDays(1–14), offDays(0–14 · 0=ทุกวัน), anchorDate?('YYYY-MM-DD' ไม่ส่ง = วันนี้), timeOfDay, pattern 'SINGLE'\|'ALTERNATE', itemId, altItemId?(ALTERNATE บังคับ ต่างจาก itemId), piecesPerCrab(0–20), active? }` → เหมือน GET |
@@ -207,7 +207,7 @@ Rule = { id, systemId, kind, defaultKey, locked, title, icon, priority, repeat(+
 - กินหมดแค่ไหน: ต่ออาหาร `score` = (กินหมด + กินน้อย/2) ÷ มื้อ · สรุปได้เมื่อมี ≥ 2 อาหารที่มี ≥ 20 มื้อ · ต่าง < 3 จุด = พอๆ กัน
 - `FeedAnalysis = { from, to, days, items:[{id,name,emoji}], growth:{ groups:[{itemId\|null, intervals, crabs, perWeek}], verdict: {kind:'faster',fastId,slowId,diff} \| {kind:'same',ids,diff} \| {kind:'single',itemId\|null}(ให้อย่างเดียว) \| {kind:'not_enough',need:[{itemId,intervals,crabs}]} }, eating:{ items:[{itemId,meals,ate,little,none,score}], verdict: {kind:'better',bestId,worstId,diff} \| {kind:'same',ids,diff} \| {kind:'single',itemId} \| {kind:'not_enough',need:[{itemId,meals}]} }, totals:{crabs,intervals,meals} }`
 
-⚠ ใหม่: `feeding_plan_missing` (menu `feed`, target `feed-plan`) · `feed_stock_missing` (`feed`, `feed-stock`) · `feed_low` (`feed`, `feed-stock`, count) · `feeding_review` (`crabs`, `crabs-feed-review`, count)
+⚠ ใหม่: `feeding_plan_missing` (menu `feed`, target `feed-plan`, `systemIds` = ระบบที่ยังไม่มีแผน) · `feed_stock_missing` (`feed`, `feed-stock-set`, `itemIds` = อาหารที่อยู่ในแผนแต่ยังไม่ใส่จำนวน · ยังไม่มีแผนเลย = ทุกอาหารถ้ายังไม่มีอันไหนใส่จำนวน) · `feed_low` (`feed`, `feed-low`, count, `itemIds`) · `feeding_review` (`crabs`, `crabs-feed-review`, count) · (2026-11-17 แยก target ของ 2 เรื่องสต็อก เดิมใช้ `feed-stock` ร่วมกัน)
 
 ## น้ำ (P5) — `/water` · ต้องมีสิทธิ์ใช้งาน · ของคนอื่น = 404
 
@@ -231,7 +231,7 @@ Rule = { id, systemId, kind, defaultKey, locked, title, icon, priority, repeat(+
 | POST | `/water/actions` | "ใส่แล้ว ✓" `{ testId, paramId, amount?(ใส่จริง) }` → 204 · เก็บ `label` ไว้ (เช่น "ใส่แมกนีเซียม 4 ช้อนแกง") · ไม่ได้หลุดแล้ว/กดซ้ำ = 400 · ไม่มีกฎ = "รับทราบแล้ว" |
 | DELETE | `/water/actions/:id` | ยกเลิก → 204 |
 
-⚠ ใหม่: `water_targets_missing` (menu `water`, target `water-targets`, count = ค่าที่วัดแต่ยังไม่มีเกณฑ์) · `water_action` (`water`, `water-advice`, count = คำแนะนำที่ยังไม่ได้ทำ)
+⚠ ใหม่: `water_targets_missing` (menu `water`, target `water-targets`, count = ค่าที่วัดแต่ยังไม่มีเกณฑ์, `systemIds`) · `water_first_test` (`water`, `water-record`, `systemIds` = ตั้งเกณฑ์ครบแล้วแต่ยังไม่เคยวัด · ลำดับนำทาง ตั้งเกณฑ์ → วัดครั้งแรก) · `water_action` (`water`, `water-advice`, count = คำแนะนำที่ยังไม่ได้ทำ, `systemIds`)
 
 ## ขายปู (P6) — `/sales` · ต้องมีสิทธิ์ใช้งาน · ของคนอื่น = 404
 
